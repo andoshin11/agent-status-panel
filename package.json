@@ -1,0 +1,17 @@
+{
+  "name": "agent-status-panel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Daemon that sends the progress of running Claude Code and Codex sessions to a phone through FCM.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "agent-status-panel": "bin/agent-status-panel.mjs"
+  },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.mjs\""
+  }
+}
