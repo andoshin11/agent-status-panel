@@ -68,6 +68,7 @@ export function buildProgress(session, { sendText = true } = {}) {
     goal: sendText ? shorten(session.goal) : '',
     step: sendText ? shorten(current?.activeForm ?? current?.subject) : '',
     tasks: sendText ? compactList(tasks) : '[]',
+    attention: session.attention ?? '',
     done: String(done),
     total: String(tasks.length)
   }
@@ -76,6 +77,17 @@ export function buildProgress(session, { sendText = true } = {}) {
 /** Tells the phone that a session it was showing is gone. */
 export function buildEnded(id) {
   return { v: SCHEMA_VERSION, id, state: 'ended' }
+}
+
+/** Asks the phone to notify that an agent needs the user. Only a state and a directory name. */
+export function buildAttention({ path, reason }, { sendText = true } = {}) {
+  return {
+    v: SCHEMA_VERSION,
+    id: `attention-${sessionKey(path)}`,
+    state: 'attention',
+    reason,
+    workspace: sendText ? shorten(basename(path)) : ''
+  }
 }
 
 /** What decides whether something changed. */

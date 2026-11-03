@@ -2,7 +2,29 @@
 // was sent is saved, so a restart repeats nothing and still ends what went away while it was down.
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { buildEnded, buildProgress, fingerprint } from './payload.mjs'
+import { buildAttention, buildEnded, buildProgress, fingerprint } from './payload.mjs'
+
+function isInside(cwd, path) {
+  return cwd === path || (cwd ?? '').startsWith(`${path}/`)
+}
+
+/**
+ * Marks the newest session of each workspace that needs the user. A workspace with no task list
+ * gets a session with no tasks, so the widget can still show it.
+ */
+export function withAttention(sessions, attention, now) {
+  const marked = [...sessions]
+  for (const { path, agent, reason } of attention) {
+    const inside = marked.filter((session) => isInside(session.cwd, path))
+    if (inside.length === 0) {
+      marked.push({ agent, listId: `worktree:${path}`, cwd: path, updatedAt: now, goal: null, tasks: [], attention: reason })
+      continue
+    }
+    const newest = inside.reduce((a, b) => (b.updatedAt > a.updatedAt ? b : a))
+    marked[marked.indexOf(newest)] = { ...newest, attention: reason }
+  }
+  return marked
+}
 
 export async function loadState(path) {
   try {
@@ -20,19 +42,25 @@ async function saveState(path, sent) {
 }
 
 /**
+ * @param readAttention  resolves to the workspaces whose agents need the user
  * @param send  resolves when delivered. A failure leaves the state alone, so the next run retries.
  * @param stateFile  null keeps nothing on disk, for a dry run
  */
-export function createPublisher({ readSessions, send, statePath: stateFile, sent, staleMs, sendText, now = Date.now, log = () => {} }) {
+export function createPublisher({ readSessions, readAttention = async () => [], send, statePath: stateFile, sent, staleMs, sendText, now = Date.now, log = () => {} }) {
   /** The messages one reading of the sessions calls for. */
-  function plan(sessions) {
+  function plan(sessions, attention = []) {
     const messages = []
     const seen = new Set()
     for (const session of [...sessions].sort((a, b) => a.updatedAt - b.updatedAt)) {
       const progress = buildProgress(session, { sendText })
-      if (progress.total === '0') continue
+      if (progress.total === '0' && !session.attention) continue
       // A session idle this long is left open, not at work. The widget lists it below the others.
       const payload = { ...progress, live: now() - session.updatedAt > staleMs ? '0' : '1' }
+      seen.add(payload.id)
+      if (sent.get(payload.id) !== fingerprint(payload)) messages.push(payload)
+    }
+    for (const entry of attention) {
+      const payload = buildAttention(entry, { sendText })
       seen.add(payload.id)
       if (sent.get(payload.id) !== fingerprint(payload)) messages.push(payload)
     }
@@ -43,7 +71,8 @@ export function createPublisher({ readSessions, send, statePath: stateFile, sent
   }
 
   async function publish() {
-    const messages = plan(await readSessions())
+    const attention = await readAttention()
+    const messages = plan(withAttention(await readSessions(), attention, now()), attention)
     let failure = null
     for (const message of messages) {
       try {

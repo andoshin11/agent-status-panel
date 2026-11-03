@@ -28,6 +28,7 @@ test('a payload has counts, the current step and only strings, as FCM requires',
     goal: 'Ship it',
     step: 'Doing the second',
     tasks: JSON.stringify([['c', 'First'], ['i', 'Doing the second'], ['p', 'Third']]),
+    attention: '',
     done: '1',
     total: '3'
   })

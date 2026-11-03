@@ -4,7 +4,8 @@ import { watch } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 
 const DEBOUNCE_MS = 2_000
-const SYNC_MS = 30_000
+// Also how late a notification that an agent needs the user can be.
+const SYNC_MS = 15_000
 
 export function startDaemon({ publish, dirs, log, watchDir = (dir, onChange) => watch(dir, { recursive: true }, onChange), debounceMs = DEBOUNCE_MS, syncMs = SYNC_MS }) {
   let timer = null
