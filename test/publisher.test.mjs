@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { createPublisher, loadState } from '../src/publisher.mjs'
+import { createPublisher, loadState, withAttention } from '../src/publisher.mjs'
 import { sessionKey } from '../src/payload.mjs'
 import { makeHome, task } from './helpers.mjs'
 
@@ -87,6 +87,40 @@ test('an idle session is sent as not live, and becomes live again when it moves'
   context.sessions = [idle]
   await context.publisher.publish()
   assert.deepEqual([context.delivered.length, context.delivered.at(-1).live], [3, '0'])
+})
+
+test('an agent that needs the user notifies once, marks its newest session, and ends when it moves on', async () => {
+  const attention = { value: [{ path: '/w/app', agent: 'claude', reason: 'waiting' }] }
+  const delivered = []
+  const sessions = [session([task(1, 'Old', 'completed')], { listId: 'old', updatedAt: NOW - 9 }), session([task(1, 'New', 'pending')], { listId: 'new', cwd: '/w/app/sub', updatedAt: NOW - 1 }), session([task(1, 'Other', 'pending')], { listId: 'other', cwd: '/w/app2' })]
+  const publisher = createPublisher({
+    readSessions: async () => sessions,
+    readAttention: async () => attention.value,
+    send: async (message) => delivered.push(message),
+    statePath: null,
+    sent: new Map(),
+    staleMs: STALE_MS,
+    sendText: true,
+    now: () => NOW
+  })
+  await publisher.publish()
+  const alertId = `attention-${sessionKey('/w/app')}`
+  const marks = () => Object.fromEntries(delivered.filter((m) => m.state !== 'attention' && m.state !== 'ended').map((m) => [m.id, m.attention]))
+  assert.deepEqual(marks(), { [sessionKey('old')]: '', [sessionKey('new')]: 'waiting', [sessionKey('other')]: '' })
+  assert.deepEqual(delivered.filter((m) => m.state === 'attention'), [{ v: '1', id: alertId, state: 'attention', reason: 'waiting', workspace: 'app', at: String(NOW) }])
+  delivered.length = 0
+  await publisher.publish()
+  assert.equal(delivered.length, 0)
+  attention.value = []
+  await publisher.publish()
+  assert.deepEqual(delivered.map((m) => [m.id, m.state, m.attention]), [[sessionKey('new'), 'active', ''], [alertId, 'ended', undefined]])
+})
+
+test('a workspace with no task list gets a card while it needs the user', async () => {
+  const context = setup()
+  const attention = [{ path: '/w/none', agent: 'codex', reason: 'permission' }]
+  const messages = context.publisher.plan(withAttention([], attention, NOW), attention)
+  assert.deepEqual(messages.map((m) => [m.state, m.total, m.attention, m.workspace]), [['active', '0', 'permission', 'none'], ['attention', undefined, undefined, 'none']])
 })
 
 test('a list of only deleted tasks shows nothing', async () => {

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Sends the progress of the running Claude Code and Codex sessions to a phone through FCM.
+// Sends the progress of the running Claude Code and Codex sessions to a phone through FCM, and says
+// when one of them needs the user.
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -10,6 +11,7 @@ import { configPath, DEFAULT_STALE_MINUTES, loadConfig, loadServiceAccount, stat
 import { startDaemon } from '../src/daemon.mjs'
 import { createFcmSender } from '../src/fcm.mjs'
 import { buildPlist, LABEL } from '../src/launchd.mjs'
+import { createAttentionReader } from '../src/orca-agents.mjs'
 import { createPublisher, loadState } from '../src/publisher.mjs'
 import { createSessionReader, progressDir } from '../src/sessions.mjs'
 
@@ -44,6 +46,7 @@ const commands = {
     const file = statePath(home)
     const { publish } = createPublisher({
       readSessions: createSessionReader({ home }),
+      readAttention: createAttentionReader({ log }),
       send,
       statePath: file,
       sent: await loadState(file),
@@ -60,6 +63,7 @@ const commands = {
   async 'dry-run'() {
     const { publish } = createPublisher({
       readSessions: createSessionReader({ home }),
+      readAttention: createAttentionReader({ log }),
       send: async () => {},
       statePath: null,
       sent: new Map(),
