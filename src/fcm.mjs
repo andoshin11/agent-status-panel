@@ -8,7 +8,9 @@ const ASSERTION_SECONDS = 3600
 const REFRESH_MARGIN_MS = 60_000
 const TIMEOUT_MS = 15_000
 // A phone that was offline gets the newest message per session, up to this long afterwards.
-const TTL = '3600s'
+// A session can stay unchanged for days, so its one message has to outlast the phone being offline.
+// collapse_key leaves only the newest message per session waiting.
+const TTL = '604800s'
 
 function base64url(value) {
   return Buffer.from(value).toString('base64url')
