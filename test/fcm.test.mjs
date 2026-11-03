@@ -42,7 +42,7 @@ test('a message is high priority and collapses per session while the phone is of
   assert.deepEqual(buildMessage('device', DATA), {
     token: 'device',
     data: DATA,
-    android: { priority: 'HIGH', ttl: '3600s', collapse_key: 'abc' }
+    android: { priority: 'HIGH', ttl: '604800s', collapse_key: 'abc' }
   })
 })
 
