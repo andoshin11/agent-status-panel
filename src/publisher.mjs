@@ -27,17 +27,12 @@ export function createPublisher({ readSessions, send, statePath: stateFile, sent
   /** The messages one reading of the sessions calls for. */
   function plan(sessions) {
     const messages = []
-    const wasLive = (id) => sent.has(id) && JSON.parse(sent.get(id)).live !== '0'
     const seen = new Set()
     for (const session of [...sessions].sort((a, b) => a.updatedAt - b.updatedAt)) {
       const progress = buildProgress(session, { sendText })
       if (progress.total === '0') continue
-      // The widget shows every running session. A session idle this long is left open, not at
-      // work, and a list finished before it was live is old news: neither starts a notification,
-      // and the first ends one.
-      const idle = now() - session.updatedAt > staleMs
-      const live = !idle && (progress.state === 'active' || wasLive(progress.id))
-      const payload = { ...progress, live: live ? '1' : '0' }
+      // A session idle this long is left open, not at work. The widget lists it below the others.
+      const payload = { ...progress, live: now() - session.updatedAt > staleMs ? '0' : '1' }
       seen.add(payload.id)
       if (sent.get(payload.id) !== fingerprint(payload)) messages.push(payload)
     }

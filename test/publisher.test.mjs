@@ -58,23 +58,23 @@ test('a session that goes away is ended once', async () => {
   assert.deepEqual(context.delivered[1], { v: '1', id: sessionKey('a'), state: 'ended', at: String(NOW) })
 })
 
-test('a list finished before it was live is sent without a notification, but a live one reports finishing', async () => {
+test('a finished list is sent once, whether or not it was seen working', async () => {
   const finished = session([task(1, 'One', 'completed')])
   const unseen = setup()
   unseen.sessions = [finished]
   await unseen.publisher.publish()
   await unseen.publisher.publish()
-  assert.deepEqual(unseen.delivered.map((m) => [m.state, m.live]), [['finished', '0']])
+  assert.deepEqual(unseen.delivered.map((m) => m.state), ['finished'])
 
   const seen = setup()
   seen.sessions = [session([task(1, 'One', 'in_progress')])]
   await seen.publisher.publish()
   seen.sessions = [finished]
   await seen.publisher.publish()
-  assert.deepEqual([seen.delivered.at(-1).state, seen.delivered.at(-1).live], ['finished', '1'])
+  assert.equal(seen.delivered.at(-1).state, 'finished')
 })
 
-test('an idle session is sent without a notification, and becomes live again when it moves', async () => {
+test('an idle session is sent as not live, and becomes live again when it moves', async () => {
   const context = setup()
   const idle = session([task(1, 'One', 'pending')], { updatedAt: NOW - STALE_MS - 1 })
   context.sessions = [idle]
@@ -87,18 +87,6 @@ test('an idle session is sent without a notification, and becomes live again whe
   context.sessions = [idle]
   await context.publisher.publish()
   assert.deepEqual([context.delivered.length, context.delivered.at(-1).live], [3, '0'])
-})
-
-test('a finished list that went idle stops being live and does not come back', async () => {
-  const context = setup()
-  context.sessions = [session([task(1, 'One', 'in_progress')])]
-  await context.publisher.publish()
-  context.sessions = [session([task(1, 'One', 'completed')], { updatedAt: NOW - STALE_MS - 1 })]
-  await context.publisher.publish()
-  assert.equal(context.delivered.at(-1).live, '0')
-  context.sessions = [session([task(1, 'One', 'completed')])]
-  await context.publisher.publish()
-  assert.equal(context.delivered.length, 2)
 })
 
 test('a list of only deleted tasks shows nothing', async () => {
