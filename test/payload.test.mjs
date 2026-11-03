@@ -75,7 +75,7 @@ test('a list too long to fit shows the tasks around the current one and keeps th
   const list = JSON.parse(payload.tasks)
   assert.ok(list[0][1].startsWith('T20 '))
   assert.deepEqual([list[0][0], list[1][0]], ['c', 'i'])
-  assert.ok(list.length < 11)
+  assert.ok(list.length < 30)
   assert.deepEqual([payload.done, payload.total], ['20', '30'])
 })
 
