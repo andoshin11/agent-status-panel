@@ -62,17 +62,25 @@ test('long text is cut by characters and the worst case fits one FCM message', (
   assert.ok(Buffer.byteLength(JSON.stringify(payload)) < 4096)
 })
 
-test('the list shows the tasks around the current one and keeps the whole counts', () => {
-  const tasks = Array.from({ length: 30 }, (_, index) => task(index + 1, `T${index + 1}`, index < 20 ? 'completed' : index === 20 ? 'in_progress' : 'pending'))
+test('a list that fits is sent whole', () => {
+  const tasks = Array.from({ length: 30 }, (_, index) => task(index + 1, `T${index + 1}`, index < 20 ? 'completed' : 'pending'))
+  assert.equal(JSON.parse(buildProgress({ ...session, tasks }).tasks).length, 30)
+})
+
+const longTasks = (count, status) => Array.from({ length: count }, (_, index) => task(index + 1, `T${index + 1} ${'進'.repeat(80)}`, status(index)))
+
+test('a list too long to fit shows the tasks around the current one and keeps the whole counts', () => {
+  const tasks = longTasks(30, (index) => (index < 20 ? 'completed' : index === 20 ? 'in_progress' : 'pending'))
   const payload = buildProgress({ ...session, tasks })
   const list = JSON.parse(payload.tasks)
-  assert.deepEqual(list.slice(0, 2), [['c', 'T20'], ['i', 'T21']])
-  assert.equal(list.length, 10)
+  assert.ok(list[0][1].startsWith('T20 '))
+  assert.deepEqual([list[0][0], list[1][0]], ['c', 'i'])
+  assert.ok(list.length < 11)
   assert.deepEqual([payload.done, payload.total], ['20', '30'])
 })
 
-test('a finished list ends with its last tasks', () => {
-  const tasks = Array.from({ length: 12 }, (_, index) => task(index + 1, `T${index + 1}`, 'completed'))
-  const list = JSON.parse(buildProgress({ ...session, tasks }).tasks)
-  assert.deepEqual([list[0][1], list.at(-1)[1], list.length], ['T3', 'T12', 10])
+test('a finished list too long to fit ends with its last tasks', () => {
+  const list = JSON.parse(buildProgress({ ...session, tasks: longTasks(30, () => 'completed') }).tasks)
+  assert.ok(list.at(-1)[1].startsWith('T30 '))
+  assert.ok(list.length < 30)
 })

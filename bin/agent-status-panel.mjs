@@ -13,9 +13,24 @@ import { buildPlist, LABEL } from '../src/launchd.mjs'
 import { createPublisher, loadState } from '../src/publisher.mjs'
 import { createSessionReader, progressDir } from '../src/sessions.mjs'
 
+const BOOTSTRAP_ATTEMPTS = 10
+const BOOTSTRAP_RETRY_MS = 1000
 const home = homedir()
 const log = (message) => console.log(`${new Date().toISOString()} ${message}`)
 const plistPath = join(home, 'Library', 'LaunchAgents', `${LABEL}.plist`)
+
+/** launchd can refuse for a moment after a bootout, which would leave the daemon stopped. */
+function bootstrap(domain) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      execFileSync('launchctl', ['bootstrap', domain, plistPath], { stdio: 'pipe' })
+      return
+    } catch (error) {
+      if (attempt === BOOTSTRAP_ATTEMPTS) throw error
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, BOOTSTRAP_RETRY_MS)
+    }
+  }
+}
 
 async function makeSender() {
   const config = await loadConfig(configPath(home))
@@ -70,7 +85,7 @@ const commands = {
     } catch {
       // It was not loaded yet.
     }
-    execFileSync('launchctl', ['bootstrap', domain, plistPath], { stdio: 'inherit' })
+    bootstrap(domain)
     log(`installed ${LABEL}; logs are in ${logFile}`)
   },
 

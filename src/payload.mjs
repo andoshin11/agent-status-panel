@@ -5,7 +5,6 @@ import { basename } from 'node:path'
 
 export const SCHEMA_VERSION = '1'
 const TEXT_MAX = 120
-const LIST_MAX = 10
 const SUBJECT_MAX = 60
 const LIST_BYTES = 2400
 const STATUS_CODES = { completed: 'c', in_progress: 'i', pending: 'p' }
@@ -17,19 +16,32 @@ function shorten(text, max = TEXT_MAX) {
   return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : line
 }
 
+function fitsList(list) {
+  return Buffer.byteLength(JSON.stringify(list)) <= LIST_BYTES
+}
+
 /**
- * The tasks around the current one, as a JSON list of [status code, subject]. It starts one before
- * the first unfinished task and stops at whichever limit comes first.
+ * The tasks as a JSON list of [status code, subject]: all of them when they fit. Otherwise those
+ * from one before the first unfinished task, or the last ones of a finished list.
  */
 function compactList(tasks) {
-  const unfinished = tasks.findIndex((task) => task.status !== 'completed')
-  const start = unfinished === -1 ? Math.max(0, tasks.length - LIST_MAX) : Math.max(0, unfinished - 1)
-  const list = []
-  for (const task of tasks.slice(start, start + LIST_MAX)) {
+  const all = tasks.map((task) => {
     const subject = task.status === 'in_progress' && task.activeForm ? task.activeForm : task.subject
-    const next = [...list, [STATUS_CODES[task.status] ?? 'p', shorten(subject, SUBJECT_MAX)]]
-    if (Buffer.byteLength(JSON.stringify(next)) > LIST_BYTES) break
-    list.push(next.at(-1))
+    return [STATUS_CODES[task.status] ?? 'p', shorten(subject, SUBJECT_MAX)]
+  })
+  if (fitsList(all)) return JSON.stringify(all)
+  const unfinished = tasks.findIndex((task) => task.status !== 'completed')
+  const list = []
+  if (unfinished === -1) {
+    for (const row of all.toReversed()) {
+      if (!fitsList([row, ...list])) break
+      list.unshift(row)
+    }
+  } else {
+    for (const row of all.slice(Math.max(0, unfinished - 1))) {
+      if (!fitsList([...list, row])) break
+      list.push(row)
+    }
   }
   return JSON.stringify(list)
 }
