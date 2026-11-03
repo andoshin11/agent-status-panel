@@ -1,4 +1,4 @@
-// Turns a session into what the phone receives. This is the contract with agent-status-panel-app.
+// Turns a session into what the phone receives. This is the contract with agent-status-panel-android.
 // An FCM data message holds at most 4 KB, so it carries counts and the current step, not the list.
 import { createHash } from 'node:crypto'
 import { basename } from 'node:path'

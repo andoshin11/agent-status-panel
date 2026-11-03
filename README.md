@@ -1,13 +1,13 @@
 # agent-status-panel
 
-Mac mini で常駐し、実行中の Claude Code と Codex のタスクの進捗を、[FCM](https://firebase.google.com/docs/cloud-messaging) でスマートフォンへ送るスクリプトです。受け取り側のアプリは [agent-status-panel-app](https://github.com/andoshin11/agent-status-panel-app) です。
+Mac mini で常駐し、実行中の Claude Code と Codex のタスクの進捗を、[FCM](https://firebase.google.com/docs/cloud-messaging) でスマートフォンへ送るスクリプトです。受け取り側のアプリは [agent-status-panel-android](https://github.com/andoshin11/agent-status-panel-android) です。
 
 ```mermaid
 flowchart LR
   agents["Claude Code / Codex"] -- "書き出す" --> files["タスクファイル・進捗ファイル"]
   files -- "fs.watch・30 秒ごと" --> daemon["agent-status-panel"]
   daemon -- "HTTP v1 API" --> fcm["FCM"]
-  fcm --> app["agent-status-panel-app"]
+  fcm --> app["agent-status-panel-android"]
 ```
 
 > [!WARNING]
