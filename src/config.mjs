@@ -37,11 +37,16 @@ export async function loadConfig(path = configPath()) {
   }
   const staleMinutes = config.staleMinutes ?? DEFAULT_STALE_MINUTES
   if (!Number.isFinite(staleMinutes) || staleMinutes <= 0) throw new Error('config.staleMinutes must be a positive number')
+  const httpPort = config.httpPort ?? null
+  if (httpPort !== null && !(Number.isInteger(httpPort) && httpPort > 0 && httpPort < 65536)) {
+    throw new Error('config.httpPort must be a port number')
+  }
   return {
     deviceTokens: config.deviceTokens,
     serviceAccountFile: config.serviceAccountFile,
     sendText: config.sendText !== false,
-    staleMinutes
+    staleMinutes,
+    httpPort
   }
 }
 

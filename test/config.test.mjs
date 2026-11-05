@@ -18,10 +18,11 @@ test('reads the settings and fills the defaults', async () => {
   assert.deepEqual(await loadConfig(await write(valid)), {
     ...valid,
     sendText: true,
-    staleMinutes: DEFAULT_STALE_MINUTES
+    staleMinutes: DEFAULT_STALE_MINUTES,
+    httpPort: null
   })
-  const custom = await loadConfig(await write({ ...valid, sendText: false, staleMinutes: 30 }))
-  assert.deepEqual([custom.sendText, custom.staleMinutes], [false, 30])
+  const custom = await loadConfig(await write({ ...valid, sendText: false, staleMinutes: 30, httpPort: 8787 }))
+  assert.deepEqual([custom.sendText, custom.staleMinutes, custom.httpPort], [false, 30, 8787])
 })
 
 test('refuses a file others can read', async () => {
@@ -32,6 +33,9 @@ test('refuses bad values, and a parse error does not quote the file', async () =
   await assert.rejects(loadConfig(await write({ ...valid, deviceTokens: [] })), /deviceTokens/)
   await assert.rejects(loadConfig(await write({ ...valid, serviceAccountFile: '~/key.json' })), /absolute/)
   await assert.rejects(loadConfig(await write({ ...valid, staleMinutes: 0 })), /staleMinutes/)
+  for (const httpPort of [0, 65536, 80.5, '8787']) {
+    await assert.rejects(loadConfig(await write({ ...valid, httpPort })), /httpPort/)
+  }
   await assert.rejects(loadConfig(join(await makeHome(), 'missing.json')), /not found/)
   await assert.rejects(loadServiceAccount(await write('{"private_key": "SECRET"')), (error) => {
     assert.ok(!error.message.includes('SECRET'))
