@@ -47,6 +47,7 @@ chmod 600 ~/.config/agent-status-panel/config.json
 | `deviceTokens` | はい | | 送信先の FCM 登録トークン |
 | `sendText` | いいえ | `true` | `false` にすると、ゴール・ステップ・タスク一覧・ワークスペース名を送らず、件数と状態だけを送ります |
 | `staleMinutes` | いいえ | `120` | この時間タスクが変わらないセッションは `live` を `0` にして送ります。ウィジェットでは下に並びます |
+| `httpPort` | いいえ | | 指定すると、セッションの一覧をこのポートで返します。`127.0.0.1` だけで待ち受けます。[iPhone から読む](#iphone-から読む)を参照 |
 
 ## 使い方
 
@@ -88,6 +89,23 @@ node bin/agent-status-panel.mjs uninstall  # 登録を解除する
 - **送るタイミング:** 内容が変わったときだけです。短時間の変更は 2 秒待ってまとめます。送信に失敗したら、30 秒後に再試行します。
 - **再起動:** 送信済みの内容を `~/.local/state/agent-status-panel/state.json` に保存します。再起動しても同じ内容を送らず、停止中に終わったセッションは終了を送ります。
 - **ゴール・ステップ・タスクの件名:** エージェントが書いたものなので、社内の名称などが含まれる可能性があります。外に出したくなければ `sendText` を `false` にしてください。
+
+## iPhone から読む
+
+iOS のウィジェットはプッシュでデータを受け取れないので、[agent-status-panel-ios](https://github.com/andoshin11/agent-status-panel-ios) は Mac mini から一覧を取りに来ます。`config.json` に `httpPort` を足して `install` をやり直し、[Tailscale](https://tailscale.com) で tailnet の中にだけ公開します。
+
+```sh
+tailscale serve --bg 8787   # httpPort が 8787 のとき
+tailscale serve status      # iPhone から読む URL（https://<マシン名>.<tailnet>.ts.net/）を確かめる
+```
+
+アプリに設定する URL は `https://<マシン名>.<tailnet>.ts.net/status.json` です。tailnet に参加している端末ならどれでも読めるので、ほかの人と共有している tailnet では使わないでください。`tailscale funnel` を使うとインターネットに公開されてしまうので、使わないでください。
+
+`GET /status.json` は次の JSON を返します。`sessions` の各要素は FCM のメッセージと同じ形式（`at` を除く）で、セッションが現れた順に並びます。デーモンを起動して最初に読み終わるまでは `503` を返します。
+
+```json
+{ "v": "1", "at": "1793923200000", "sessions": [{ "id": "…", "state": "active", "live": "1", "done": "1", "total": "2", "…": "…" }] }
+```
 
 ## 開発
 

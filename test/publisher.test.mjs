@@ -161,3 +161,31 @@ test('a restart repeats nothing and still ends what went away while it was down'
   await second.publisher.publish()
   assert.deepEqual(second.delivered, [{ v: '1', id: sessionKey('b'), state: 'ended', at: String(NOW) }])
 })
+
+test('keeps the sessions for reading, in the order they appeared', async () => {
+  const context = setup()
+  assert.equal(context.publisher.snapshot(), null)
+  context.sessions = [session([task(1, 'One', 'pending')], { listId: 'a', updatedAt: NOW - 10 }), session([task(1, 'One', 'pending')], { listId: 'b', updatedAt: NOW - 20 })]
+  await context.publisher.publish()
+  const ids = () => context.publisher.snapshot().sessions.map((s) => s.id)
+  assert.deepEqual(ids(), [sessionKey('b'), sessionKey('a')])
+  assert.deepEqual([context.publisher.snapshot().v, context.publisher.snapshot().at], ['1', String(NOW)])
+  // Work on the older one does not move it.
+  context.sessions = [session([task(1, 'One', 'completed')], { listId: 'a', updatedAt: NOW - 10 }), session([task(1, 'One', 'in_progress')], { listId: 'b', updatedAt: NOW })]
+  await context.publisher.publish()
+  assert.deepEqual(ids(), [sessionKey('b'), sessionKey('a')])
+  assert.equal(context.publisher.snapshot().sessions[1].done, '1')
+  // A session that went away and came back comes last.
+  context.sessions = [session([task(1, 'One', 'pending')], { listId: 'a' })]
+  await context.publisher.publish()
+  context.sessions = [session([task(1, 'One', 'pending')], { listId: 'a' }), session([task(1, 'One', 'pending')], { listId: 'b', updatedAt: NOW - 30 })]
+  await context.publisher.publish()
+  assert.deepEqual(ids(), [sessionKey('a'), sessionKey('b')])
+})
+
+test('a failed send still updates what is read', async () => {
+  const context = setup({ send: async () => { throw new Error('offline') } })
+  context.sessions = [session([task(1, 'One', 'pending')])]
+  await assert.rejects(context.publisher.publish(), /offline/)
+  assert.deepEqual(context.publisher.snapshot().sessions.map((s) => s.id), [sessionKey('a')])
+})

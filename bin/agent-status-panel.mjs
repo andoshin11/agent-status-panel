@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Sends the progress of the running Claude Code and Codex sessions to a phone through FCM, and says
-// when one of them needs the user.
+// when one of them needs the user. It can also serve them to a phone that reads them.
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -13,6 +13,7 @@ import { createFcmSender } from '../src/fcm.mjs'
 import { buildPlist, LABEL } from '../src/launchd.mjs'
 import { createAttentionReader } from '../src/orca-agents.mjs'
 import { createPublisher, loadState } from '../src/publisher.mjs'
+import { startStatusServer, STATUS_PATH } from '../src/server.mjs'
 import { createSessionReader, progressDir } from '../src/sessions.mjs'
 
 const BOOTSTRAP_ATTEMPTS = 10
@@ -44,7 +45,7 @@ const commands = {
   async run() {
     const { config, send } = await makeSender()
     const file = statePath(home)
-    const { publish } = createPublisher({
+    const { publish, snapshot } = createPublisher({
       readSessions: createSessionReader({ home }),
       readAttention: createAttentionReader({ log }),
       send,
@@ -57,6 +58,10 @@ const commands = {
     const daemon = startDaemon({ publish, dirs: [claudePaths(home).tasksRoot, progressDir(home)], log })
     await daemon.ready
     log('watching the task lists')
+    if (config.httpPort !== null) {
+      await startStatusServer({ port: config.httpPort, snapshot })
+      log(`serving the sessions at http://127.0.0.1:${config.httpPort}${STATUS_PATH}`)
+    }
   },
 
   /** Prints what would be sent if nothing had been sent yet. It needs no settings and sends nothing. */
