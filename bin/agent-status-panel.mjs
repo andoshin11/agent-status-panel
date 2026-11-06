@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 // Sends the progress of the running Claude Code and Codex sessions to a phone through FCM, and says
-// when one of them needs the user. It can also serve them to a phone that reads them.
+// when one of them needs the user. It can also serve them to a phone that reads them, and tell an
+// iPhone through APNs when an agent needs the user.
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { claudePaths } from '../src/claude-sessions.mjs'
-import { configPath, DEFAULT_STALE_MINUTES, loadConfig, loadServiceAccount, statePath } from '../src/config.mjs'
+import { createApnsSender, createDeviceRegistry, ENVIRONMENTS, isDeviceToken } from '../src/apns.mjs'
+import { apnsDevicesPath, configPath, DEFAULT_STALE_MINUTES, loadApnsKey, loadConfig, loadServiceAccount, statePath } from '../src/config.mjs'
 import { startDaemon } from '../src/daemon.mjs'
 import { createFcmSender } from '../src/fcm.mjs'
 import { buildPlist, LABEL } from '../src/launchd.mjs'
@@ -35,15 +37,30 @@ function bootstrap(domain) {
   }
 }
 
+/** Sends to Android through FCM and, when configured, to iPhones through APNs. */
 async function makeSender() {
   const config = await loadConfig(configPath(home))
   const serviceAccount = await loadServiceAccount(config.serviceAccountFile)
-  return { config, send: createFcmSender({ serviceAccount, tokens: config.deviceTokens, log }) }
+  const fcm = createFcmSender({ serviceAccount, tokens: config.deviceTokens, log })
+  if (!config.apns) return { config, send: fcm, apns: null, register: null, close: () => {} }
+  const devices = await createDeviceRegistry(apnsDevicesPath(home))
+  const apns = createApnsSender({ ...config.apns, key: await loadApnsKey(config.apns.keyFile), devices, log })
+  async function register({ token, environment }) {
+    if (!isDeviceToken(token) || !Object.hasOwn(ENVIRONMENTS, environment)) throw new TypeError('not an APNs device')
+    if (await devices.add(token, environment)) log(`registered an iPhone for notifications; ${devices.list().length} in all`)
+  }
+  return {
+    config,
+    send: (data) => Promise.all([fcm(data), apns(data)]),
+    apns,
+    register,
+    close: apns.close
+  }
 }
 
 const commands = {
   async run() {
-    const { config, send } = await makeSender()
+    const { config, send, register } = await makeSender()
     const file = statePath(home)
     const { publish, snapshot } = createPublisher({
       readSessions: createSessionReader({ home }),
@@ -59,7 +76,7 @@ const commands = {
     await daemon.ready
     log('watching the task lists')
     if (config.httpPort !== null) {
-      await startStatusServer({ port: config.httpPort, snapshot })
+      await startStatusServer({ port: config.httpPort, snapshot, register })
       log(`serving the sessions at http://127.0.0.1:${config.httpPort}${STATUS_PATH}`)
     }
   },
@@ -79,9 +96,19 @@ const commands = {
   },
 
   async 'send-test'() {
-    const { send } = await makeSender()
+    const { send, close } = await makeSender()
     await send({ v: '1', id: 'test', agent: 'claude', state: 'finished', at: String(Date.now()), workspace: 'test', goal: 'Test from agent-status-panel', step: 'Checking delivery', done: '1', total: '1' })
     log('sent a test message')
+    close()
+  },
+
+  /** Shows the notification an iPhone gets when an agent waits for the user. */
+  async 'send-test-ios'() {
+    const { apns, close } = await makeSender()
+    if (!apns) throw new Error('config.apns is not set')
+    await apns({ v: '1', id: 'attention-test', state: 'attention', reason: 'waiting', workspace: 'test', at: String(Date.now()) })
+    log('sent a test notification to the iPhones')
+    close()
   },
 
   install() {
