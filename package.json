@@ -2,7 +2,7 @@
   "name": "agent-status-panel",
   "version": "0.1.0",
   "private": true,
-  "description": "Daemon that sends the progress of running Claude Code and Codex sessions to a phone through FCM.",
+  "description": "Daemon that sends the progress of running Claude Code and Codex sessions to a phone through FCM, and notifies an iPhone through APNs when an agent needs the user.",
   "license": "MIT",
   "type": "module",
   "engines": {

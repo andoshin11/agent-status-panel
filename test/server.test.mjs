@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { startStatusServer, STATUS_PATH } from '../src/server.mjs'
+import { DEVICES_PATH, startStatusServer, STATUS_PATH } from '../src/server.mjs'
 
-async function serve(snapshot) {
-  const server = await startStatusServer({ port: 0, snapshot })
+async function serve(snapshot, register = null) {
+  const server = await startStatusServer({ port: 0, snapshot, register })
   const { address, port } = server.address()
   return { server, url: (path) => `http://${address}:${port}${path}` }
 }
@@ -44,4 +44,32 @@ test('serves nothing else', async (t) => {
   const head = await fetch(url(STATUS_PATH), { method: 'HEAD' })
   assert.equal(head.status, 200)
   assert.equal(await head.text(), '')
+})
+
+test('the iOS app registers its device for notifications', async (t) => {
+  const kept = []
+  const register = async (device) => {
+    if (device.token === 'bad') throw new TypeError('not an APNs device')
+    if (device.token === 'disk') throw new Error('disk full')
+    kept.push(device)
+  }
+  const { server, url } = await serve(() => null, register)
+  t.after(() => server.close())
+  const post = (body) => fetch(url(DEVICES_PATH), { method: 'POST', body })
+  assert.equal((await post(JSON.stringify({ token: 'abc', environment: 'development', extra: 1 }))).status, 204)
+  assert.deepEqual(kept, [{ token: 'abc', environment: 'development' }])
+  assert.equal((await post(JSON.stringify({ token: 'bad' }))).status, 400)
+  assert.equal((await post('{')).status, 400)
+  assert.equal((await post('null')).status, 400)
+  assert.equal((await post(JSON.stringify({ token: 'x'.repeat(2000) }))).status, 413)
+  assert.equal((await post(JSON.stringify({ token: 'disk' }))).status, 500)
+  const get = await fetch(url(DEVICES_PATH))
+  assert.equal(get.status, 405)
+  assert.equal(get.headers.get('allow'), 'POST')
+})
+
+test('without notifications there is nothing to register with', async (t) => {
+  const { server, url } = await serve(() => null)
+  t.after(() => server.close())
+  assert.equal((await fetch(url(DEVICES_PATH), { method: 'POST', body: '{}' })).status, 404)
 })

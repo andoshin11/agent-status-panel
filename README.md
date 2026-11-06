@@ -18,6 +18,7 @@ flowchart LR
 - macOS と Node.js 24 以上（実行時の依存パッケージはありません）
 - FCM を有効にした Firebase プロジェクトとサービスアカウントの鍵
 - 受け取り側アプリの FCM 登録トークン
+- iPhone に通知するなら、Apple Developer Program のアカウント
 - [Milestone](https://github.com/andoshin11/orca-milestone) プラグイン。起動した Claude Code にタスクを書くよう指示し、Codex に進捗を記録するツールを渡します。これがなければ、別の方法で同じ設定を入れてください。
 
 ## 設定
@@ -48,12 +49,14 @@ chmod 600 ~/.config/agent-status-panel/config.json
 | `sendText` | いいえ | `true` | `false` にすると、ゴール・ステップ・タスク一覧・ワークスペース名を送らず、件数と状態だけを送ります |
 | `staleMinutes` | いいえ | `120` | この時間タスクが変わらないセッションは `live` を `0` にして送ります。ウィジェットでは下に並びます |
 | `httpPort` | いいえ | | 指定すると、セッションの一覧をこのポートで返します。`127.0.0.1` だけで待ち受けます。[iPhone から読む](#iphone-から読む)を参照 |
+| `apns` | いいえ | | 指定すると、エージェントが操作を待っているときに iPhone へ通知します。[iPhone に通知する](#iphone-に通知する)を参照 |
 
 ## 使い方
 
 ```sh
 node bin/agent-status-panel.mjs dry-run    # 今送る内容を表示する（設定不要、何も送らない）
 node bin/agent-status-panel.mjs send-test  # テストメッセージを送る
+node bin/agent-status-panel.mjs send-test-ios  # 登録済みの iPhone にテスト通知を送る
 node bin/agent-status-panel.mjs install    # launchd に登録して常駐させる
 node bin/agent-status-panel.mjs uninstall  # 登録を解除する
 ```
@@ -106,6 +109,37 @@ tailscale serve status      # iPhone から読む URL（https://<マシン名>.<
 ```json
 { "v": "1", "at": "1793923200000", "sessions": [{ "id": "…", "state": "active", "live": "1", "done": "1", "total": "2", "…": "…" }] }
 ```
+
+## iPhone に通知する
+
+エージェントが許可や入力を待ち始めたら、iOS アプリに APNs で通知します。待つのをやめたら、表示中の通知を消すためのサイレントプッシュを送ります。進捗は送りません（ウィジェットとアプリが読みに来ます）。[iPhone から読む](#iphone-から読む)の設定が前提です。
+
+1. [Apple Developer](https://developer.apple.com/account/resources/authkeys/add) で APNs を有効にしたキーを作り、`.p8` をダウンロードします。Xcode から直接入れるアプリは Sandbox を使うので、Environment は Sandbox か Sandbox & Production にします。
+2. 鍵を設定ディレクトリに移し、所有者だけが読める権限にします。
+
+   ```sh
+   mv ~/Downloads/AuthKey_<キー ID>.p8 ~/.config/agent-status-panel/
+   chmod 600 ~/.config/agent-status-panel/AuthKey_<キー ID>.p8
+   ```
+
+3. `config.json` に `apns` を足して `install` をやり直します。
+
+   ```json
+   "apns": {
+     "keyFile": "/Users/<ユーザー名>/.config/agent-status-panel/AuthKey_<キー ID>.p8",
+     "keyId": "<キー ID>",
+     "teamId": "<チーム ID>",
+     "topic": "<アプリの Bundle ID>"
+   }
+   ```
+
+iOS アプリは起動するたびに `POST /apns/devices` でデバイストークンを登録します。登録先は `~/.local/state/agent-status-panel/apns-devices.json` です。アプリを消すなどして APNs が受け付けなくなったトークンは、自動で外します。
+
+```json
+{ "token": "<16 進のデバイストークン>", "environment": "development" }
+```
+
+`environment` は、Xcode から入れたアプリなら `development`、TestFlight や App Store から入れたアプリなら `production` です。
 
 ## 開発
 
