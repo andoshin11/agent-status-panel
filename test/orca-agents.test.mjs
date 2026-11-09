@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { answerKeys, attentionFrom, createAgentReader, isDangerous, offerId, offersFrom, offersOf, parseSuggestions, questionButtons, questionForm, resolveOrcaCli } from '../src/orca-agents.mjs'
+import { answerKeys, attentionFrom, createAgentReader, isDangerous, linksFrom, offerId, offersFrom, offersOf, parseSuggestions, questionButtons, questionForm, resolveOrcaCli } from '../src/orca-agents.mjs'
 
 const agent = (state, extra = {}) => ({ agentType: 'claude', state, prompt: 'secret', ...extra })
 
@@ -287,4 +287,36 @@ test('no buttons when the transcript says the call is over or is another call', 
 test('a question is not treated as a permission', async () => {
   const offers = await offersOf([{ path: '/a', agents: [waiting()] }], async () => null, undefined, async () => ({ toolUseId: 't', name: 'AskUserQuestion', input: {} }))
   assert.deepEqual(offers, [])
+})
+
+const PR = (n, repo = 'app') => `https://github.com/org/${repo}/pull/${n}`
+const replied = (text, extra = {}) => agent('done', { hasLivePty: true, lastAssistantMessage: text, ...extra })
+
+test('linksFrom takes the pull requests of the last reply, newest first', () => {
+  assert.deepEqual(linksFrom([{ path: '/a', agents: [replied(`見てください ${PR(1)}。あと ${PR(2, 'api')} も`)] }]), [
+    { path: '/a', agent: 'claude', fromReply: true, links: [{ title: 'PR #2 · api', url: PR(2, 'api') }, { title: 'PR #1 · app', url: PR(1) }] }
+  ])
+})
+
+test('linksFrom keeps three, once each, and adds the open pull request of the workspace', () => {
+  const text = [1, 2, 3, 4, 3].map((n) => PR(n)).join(' ')
+  assert.deepEqual(linksFrom([{ path: '/a', agents: [replied(text)] }])[0].links.map(({ url }) => url), [PR(3), PR(4), PR(2)])
+  const [entry] = linksFrom([{ path: '/a', agents: [replied(PR(1))], linkedPR: { state: 'open', url: PR(9) } }])
+  assert.deepEqual(entry.links.map(({ url }) => url), [PR(1), PR(9)])
+})
+
+test('a workspace with only its linked pull request says so', () => {
+  const [entry] = linksFrom([{ path: '/a', agents: [], linkedPR: { state: 'open', url: PR(9) } }])
+  assert.equal(entry.fromReply, false)
+  assert.equal(entry.links.length, 1)
+})
+
+test('linksFrom leaves out what is not worth opening', () => {
+  const none = (worktree) => assert.deepEqual(linksFrom([{ path: '/a', ...worktree }]), [])
+  none({ agents: [replied(PR(1), { state: 'working' })] })
+  none({ agents: [replied(PR(1), { hasLivePty: undefined })] })
+  none({ agents: [replied('https://example.com/org/app/pull/1')] })
+  none({ agents: [replied(PR(1))], isArchived: true })
+  none({ agents: [], linkedPR: { state: 'merged', url: PR(1) } })
+  none({ agents: [], linkedPR: { state: 'open', url: 'https://example.com/x' } })
 })

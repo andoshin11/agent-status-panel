@@ -132,6 +132,8 @@ tailscale serve status      # iPhone から読む URL（https://<マシン名>.<
 | `details` | ボタンの説明の JSON 配列（文字列）。順番は `suggestions` と同じです。提案は送られる依頼文、質問は選択肢の説明です |
 | `question` | エージェントが質問しているときの質問文。提案のときは項目がありません |
 
+| `links` | 開ける PR の JSON 配列（文字列）。`[{"title":"PR #12 · repo","url":"…"}]`。エージェントの最新の回答にある URL と、Orca がワークスペースに紐づけた開いている PR です |
+
 ボタンを押すと、アプリが `POST /next` に `{"offer":"…","index":0}` を送ります。
 
 | 応答 | 意味 |

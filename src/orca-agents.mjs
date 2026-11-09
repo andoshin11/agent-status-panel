@@ -36,6 +36,10 @@ const DANGEROUS_COMMANDS = [
   /\bdrop\s+(table|database)\b/i,
   /\btruncate\s+table\b/i
 ]
+const PR_URL = /https:\/\/github\.com\/[\w.-]+\/([\w.-]+)\/pull\/(\d+)/g
+const LINKS_MAX = 3
+// An agent at work has moved on from what its last reply linked to.
+const LINKING_STATES = new Set(['done', 'waiting', 'blocked', 'permission'])
 const NEXT_BLOCK = /```next[ \t]*\r?\n([\s\S]*?)\r?\n?```\s*$/
 const CONTROL = /[\u0000-\u001f\u007f]/
 
@@ -255,6 +259,28 @@ export function offersFrom(worktrees, shown = new Map()) {
   return offers
 }
 
+function pullLinks(text) {
+  return [...(text ?? '').matchAll(PR_URL)].map(([url, repository, number]) => ({ title: `PR #${number} · ${repository}`, url }))
+}
+
+/**
+ * The pull requests to open from each workspace: those the last reply of an agent links to, newest
+ * first, then the one Orca has linked to the workspace.
+ */
+export function linksFrom(worktrees) {
+  const entries = []
+  for (const worktree of worktrees) {
+    if (worktree.isArchived) continue
+    const agents = mainAgents(worktree).filter((agent) => agent.hasLivePty === true)
+    const replied = agents.filter((agent) => LINKING_STATES.has(agent.state)).flatMap((agent) => pullLinks(agent.lastAssistantMessage).reverse())
+    const linked = worktree.linkedPR?.state === 'open' ? pullLinks(worktree.linkedPR.url) : []
+    const links = [...new Map([...replied, ...linked].map((link) => [link.url, link])).values()].slice(0, LINKS_MAX)
+    if (links.length === 0) continue
+    entries.push({ path: worktree.path, agent: agents[0]?.agentType ?? 'claude', links, fromReply: replied.length > 0 })
+  }
+  return entries
+}
+
 export function runOrca(cli, args, timeout = 10_000) {
   return new Promise((resolve, reject) => {
     execFile(cli, args, { timeout, maxBuffer: 16 * 1024 * 1024 }, (error, stdout) => {
@@ -284,6 +310,7 @@ export async function readWorktrees(cli) {
 export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees, readQuestion = async () => null, readSuggestions, readCall, log = () => {} } = {}) {
   let attention = []
   let offers = []
+  let links = []
   let failing = false
   return {
     async readAttention() {
@@ -291,6 +318,7 @@ export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees
         const worktrees = await read(cli)
         attention = attentionFrom(worktrees)
         offers = await offersOf(worktrees, readQuestion, readSuggestions, readCall)
+        links = linksFrom(worktrees)
         failing = false
       } catch (error) {
         if (!failing) log(`keeping the last agent states: ${error.message}`)
@@ -299,6 +327,7 @@ export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees
       return attention
     },
     /** What the last `readAttention` found, so that one reading serves both. */
-    readOffers: () => offers
+    readOffers: () => offers,
+    readLinks: () => links
   }
 }
