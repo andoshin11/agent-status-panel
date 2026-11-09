@@ -26,6 +26,29 @@ export function withAttention(sessions, attention, now) {
   return marked
 }
 
+/**
+ * Puts what an agent proposed on the newest session of its workspace, or on a session with no
+ * tasks when the workspace has none, as `withAttention` does.
+ */
+export function withOffers(sessions, offers, now) {
+  const marked = [...sessions]
+  for (const offer of offers) {
+    const inside = marked.filter((session) => isInside(session.cwd, offer.path))
+    if (inside.length === 0) {
+      marked.push({ agent: offer.agent, listId: `worktree:${offer.path}`, cwd: offer.path, updatedAt: now, goal: null, tasks: [], offer })
+      continue
+    }
+    const newest = inside.reduce((a, b) => (b.updatedAt > a.updatedAt ? b : a))
+    marked[marked.indexOf(newest)] = { ...newest, offer }
+  }
+  return marked
+}
+
+/** The labels only: the prompts stay on this machine until a button is pressed. */
+function offerFields(offer) {
+  return offer ? { offer: offer.id, suggestions: JSON.stringify(offer.suggestions.map(({ label }) => label)) } : {}
+}
+
 export async function loadState(path) {
   try {
     const { sent } = JSON.parse(await readFile(path, 'utf8'))
@@ -43,10 +66,11 @@ async function saveState(path, sent) {
 
 /**
  * @param readAttention  resolves to the workspaces whose agents need the user
+ * @param readOffers  returns what the agents proposed. It reaches the phones that read, never a push.
  * @param send  resolves when delivered. A failure leaves the state alone, so the next run retries.
  * @param stateFile  null keeps nothing on disk, for a dry run
  */
-export function createPublisher({ readSessions, readAttention = async () => [], send, statePath: stateFile, sent, staleMs, sendText, now = Date.now, log = () => {} }) {
+export function createPublisher({ readSessions, readAttention = async () => [], readOffers = () => [], send, statePath: stateFile, sent, staleMs, sendText, now = Date.now, log = () => {} }) {
   const firstSeen = new Map()
   let order = 0
   let board = null
@@ -56,9 +80,9 @@ export function createPublisher({ readSessions, readAttention = async () => [], 
     const list = []
     for (const session of [...sessions].sort((a, b) => a.updatedAt - b.updatedAt)) {
       const progress = buildProgress(session, { sendText })
-      if (progress.total === '0' && !session.attention) continue
+      if (progress.total === '0' && !session.attention && !session.offer) continue
       // A session idle this long is left open, not at work. The widget lists it below the others.
-      list.push({ ...progress, live: now() - session.updatedAt > staleMs ? '0' : '1' })
+      list.push({ ...progress, live: now() - session.updatedAt > staleMs ? '0' : '1', ...offerFields(session.offer) })
     }
     return list
   }
@@ -107,9 +131,10 @@ export function createPublisher({ readSessions, readAttention = async () => [], 
 
   async function publish() {
     const attention = await readAttention()
-    const progress = progressOf(withAttention(await readSessions(), attention, now()))
+    const sessions = withAttention(await readSessions(), attention, now())
+    const progress = progressOf(sessions)
     // Before sending, so that a phone that reads does not wait on one that FCM cannot reach.
-    remember(progress)
+    remember(sendText ? progressOf(withOffers(sessions, readOffers(), now())) : progress)
     const messages = planFrom(progress, attention)
     let failure = null
     for (const message of messages) {

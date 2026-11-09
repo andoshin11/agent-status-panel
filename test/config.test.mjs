@@ -17,6 +17,7 @@ const valid = { deviceTokens: ['device'], serviceAccountFile: '/keys/account.jso
 test('reads the settings and fills the defaults', async () => {
   assert.deepEqual(await loadConfig(await write(valid)), {
     ...valid,
+    allowedLogin: null,
     apns: null,
     sendText: true,
     staleMinutes: DEFAULT_STALE_MINUTES,
@@ -24,6 +25,13 @@ test('reads the settings and fills the defaults', async () => {
   })
   const custom = await loadConfig(await write({ ...valid, sendText: false, staleMinutes: 30, httpPort: 8787 }))
   assert.deepEqual([custom.sendText, custom.staleMinutes, custom.httpPort], [false, 30, 8787])
+})
+
+test('reads who may press the buttons, and refuses anything but a name', async () => {
+  assert.equal((await loadConfig(await write({ ...valid, allowedLogin: 'me@example.com' }))).allowedLogin, 'me@example.com')
+  for (const allowedLogin of ['', 1, true]) {
+    await assert.rejects(loadConfig(await write({ ...valid, allowedLogin })), /allowedLogin/)
+  }
 })
 
 test('refuses a file others can read', async () => {

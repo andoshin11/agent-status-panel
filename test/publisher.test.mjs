@@ -189,3 +189,60 @@ test('a failed send still updates what is read', async () => {
   await assert.rejects(context.publisher.publish(), /offline/)
   assert.deepEqual(context.publisher.snapshot().sessions.map((s) => s.id), [sessionKey('a')])
 })
+
+const OFFER = { id: 'o1', path: '/w/app', agent: 'claude', paneKey: 't:l', suggestions: [{ label: 'PR を作る', prompt: 'secret prompt' }] }
+
+function setupOffers({ sendText = true } = {}) {
+  const context = { sessions: [], offers: [OFFER], delivered: [] }
+  context.publisher = createPublisher({
+    readSessions: async () => context.sessions,
+    readOffers: () => context.offers,
+    send: async (message) => context.delivered.push(message),
+    statePath: null,
+    sent: new Map(),
+    staleMs: STALE_MS,
+    sendText,
+    now: () => NOW
+  })
+  return context
+}
+
+test('an offer goes on the board with its labels only, and never into a push', async () => {
+  const context = setupOffers()
+  context.sessions = [session([task(1, 'One', 'completed')])]
+  await context.publisher.publish()
+  const [card] = context.publisher.snapshot().sessions
+  assert.equal(card.offer, 'o1')
+  assert.equal(card.suggestions, '["PR を作る"]')
+  assert.ok(!JSON.stringify(context.publisher.snapshot()).includes('secret prompt'))
+  assert.equal(context.delivered.length, 1)
+  assert.equal(context.delivered[0].offer, undefined)
+  assert.equal(context.delivered[0].suggestions, undefined)
+})
+
+test('an offer shows a workspace without tasks on the board, and pushes nothing for it', async () => {
+  const context = setupOffers()
+  await context.publisher.publish()
+  const { sessions } = context.publisher.snapshot()
+  assert.equal(sessions.length, 1)
+  assert.equal(sessions[0].offer, 'o1')
+  assert.equal(sessions[0].total, '0')
+  assert.equal(context.delivered.length, 0)
+})
+
+test('an offer leaves the board when the agent moves on, without a push', async () => {
+  const context = setupOffers()
+  context.sessions = [session([task(1, 'One', 'completed')])]
+  await context.publisher.publish()
+  context.offers = []
+  await context.publisher.publish()
+  assert.equal(context.publisher.snapshot().sessions[0].offer, undefined)
+  assert.equal(context.delivered.length, 1)
+})
+
+test('with sendText off there are no offers', async () => {
+  const context = setupOffers({ sendText: false })
+  context.sessions = [session([task(1, 'One', 'completed')])]
+  await context.publisher.publish()
+  assert.equal(context.publisher.snapshot().sessions[0].offer, undefined)
+})

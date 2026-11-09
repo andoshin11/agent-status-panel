@@ -51,7 +51,12 @@ export async function loadConfig(path = configPath()) {
   if (httpPort !== null && !(Number.isInteger(httpPort) && httpPort > 0 && httpPort < 65536)) {
     throw new Error('config.httpPort must be a port number')
   }
+  const allowedLogin = config.allowedLogin ?? null
+  if (allowedLogin !== null && (typeof allowedLogin !== 'string' || !allowedLogin)) {
+    throw new Error('config.allowedLogin must be a Tailscale login name')
+  }
   return {
+    allowedLogin,
     deviceTokens: config.deviceTokens,
     apns: config.apns === undefined ? null : apnsOf(config.apns),
     serviceAccountFile: config.serviceAccountFile,
