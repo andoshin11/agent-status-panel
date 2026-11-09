@@ -18,6 +18,8 @@ const OPTION_MAX = 60
 const DETAIL_MAX = 200
 // One key each: the menu takes the number of an option as a single key press.
 const OPTIONS_MAX = 9
+const QUESTIONS_MAX = 4
+const TAB_KEY = '\t'
 const NEXT_BLOCK = /```next[ \t]*\r?\n([\s\S]*?)\r?\n?```\s*$/
 const CONTROL = /[\u0000-\u001f\u007f]/
 
@@ -112,13 +114,60 @@ export function questionButtons(asked) {
   }
 }
 
+/** What the phone shows for questions a single key cannot answer: several, or several choices. */
+export function questionForm(asked) {
+  const questions = asked?.questions
+  if (!Array.isArray(questions) || questions.length === 0 || questions.length > QUESTIONS_MAX) return null
+  const valid = questions.every(
+    ({ question, options } = {}) =>
+      typeof question === 'string' && question.trim() &&
+      Array.isArray(options) && options.length > 0 && options.length <= OPTIONS_MAX &&
+      options.every((option) => typeof option?.label === 'string' && option.label.trim())
+  )
+  if (!valid) return null
+  return questions.map(({ question, multiSelect, options }) => ({
+    question: shorten(question, QUESTION_MAX),
+    multiSelect: multiSelect === true,
+    options: options.map((option) => ({
+      label: shorten(option.label, OPTION_MAX),
+      detail: typeof option.description === 'string' ? shorten(option.description, DETAIL_MAX) : ''
+    }))
+  }))
+}
+
+/**
+ * The keys that answer a form, or null for answers that do not fit it. A number on a question with
+ * one answer moves to the next question by itself; with several answers it only ticks the option,
+ * and Tab moves on. After the last question the menu shows a review page, left for the caller.
+ */
+export function answerKeys(questions, answers) {
+  if (!Array.isArray(questions) || !Array.isArray(answers) || answers.length !== questions.length) return null
+  const keys = []
+  for (const [position, { multiSelect, options }] of questions.entries()) {
+    const chosen = answers[position]
+    if (!Array.isArray(chosen) || chosen.length === 0 || new Set(chosen).size !== chosen.length) return null
+    if (!multiSelect && chosen.length !== 1) return null
+    if (!chosen.every((index) => Number.isInteger(index) && index >= 0 && index < options.length)) return null
+    keys.push(...chosen.map((index) => String(index + 1)))
+    if (multiSelect) keys.push(TAB_KEY)
+  }
+  return keys
+}
+
 async function questionOffer(worktree, readQuestion) {
   const agent = soleAgent(worktree)
   if (agent?.agentType !== 'claude' || agent.state !== 'waiting' || agent.toolName !== 'AskUserQuestion') return null
   const asked = await readQuestion(worktree.path).catch(() => null)
   const buttons = questionButtons(asked)
-  if (!buttons) return null
-  return { id: offerId(agent, asked.toolUseId), path: worktree.path, agent: agent.agentType, paneKey: agent.paneKey, ...buttons }
+  const questions = buttons ? null : questionForm(asked)
+  if (!buttons && !questions) return null
+  return {
+    id: offerId(agent, asked.toolUseId),
+    path: worktree.path,
+    agent: agent.agentType,
+    paneKey: agent.paneKey,
+    ...(buttons ?? { suggestions: [], questions })
+  }
 }
 
 /** What every agent offers now: what it proposed after finishing, and what it is asking. */

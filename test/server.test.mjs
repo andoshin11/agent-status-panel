@@ -99,6 +99,17 @@ test('a press says when a draft is in the way', async (t) => {
   assert.equal((await press(JSON.stringify({ offer: 'a', index: 0 }))).status, 423)
 })
 
+test('a press can carry the answers of a form', async (t) => {
+  const pressed = []
+  const { server, press } = await serveNext(async (button) => (pressed.push(button), true))
+  t.after(() => server.close())
+  assert.equal((await press(JSON.stringify({ offer: 'a', answers: [[0, 1], [2]] }))).status, 204)
+  assert.deepEqual(pressed, [{ offer: 'a', answers: [[0, 1], [2]] }])
+  for (const answers of ['x', [0], [['a']], [[0.5]]]) {
+    assert.equal((await press(JSON.stringify({ offer: 'a', answers }))).status, 400, JSON.stringify(answers))
+  }
+})
+
 test('only the allowed login can press a button', async (t) => {
   let calls = 0
   const { server, press } = await serveNext(async () => ++calls > 0)

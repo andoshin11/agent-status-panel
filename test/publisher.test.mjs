@@ -259,3 +259,15 @@ test('a question goes on the board with its text, and never into a push', async 
   assert.equal(card.details, '["A warm color"]')
   assert.equal(context.delivered[0].question, undefined)
 })
+
+test('a form goes on the board, and never into a push', async () => {
+  const context = setupOffers()
+  const questions = [{ question: 'Q', multiSelect: true, options: [{ label: 'A', detail: '' }] }]
+  context.offers = [{ ...OFFER, suggestions: [], questions }]
+  context.sessions = [session([task(1, 'One', 'in_progress')])]
+  await context.publisher.publish()
+  const [card] = context.publisher.snapshot().sessions
+  assert.deepEqual(JSON.parse(card.questions), questions)
+  assert.equal(card.suggestions, '[]')
+  assert.equal(context.delivered[0].questions, undefined)
+})

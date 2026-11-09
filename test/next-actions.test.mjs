@@ -149,3 +149,45 @@ test('a button for a question already answered presses nothing', async () => {
   assert.equal(await context.next({ offer: ASKED, index: 0 }), false)
   assert.deepEqual(context.keys, [])
 })
+
+const formQuestion = { toolUseId: 'toolu_9', questions: [
+  { question: 'Fruit?', multiSelect: true, options: [{ label: 'A' }, { label: 'B' }, { label: 'C' }] },
+  { question: 'Color?', multiSelect: false, options: [{ label: 'R' }, { label: 'G' }] }
+] }
+const FORM = offerId(asking, 'toolu_9')
+
+function setupForm({ screen = async () => 'Ready to submit your answers?\n1. Submit answers', pressKeys } = {}) {
+  const context = { keys: [] }
+  context.next = createNextSender({
+    cli: 'orca',
+    read: async () => [{ path: '/a', agents: [asking] }],
+    readQuestion: async () => formQuestion,
+    terminals: async () => [{ handle: 'h1', tabId: 'tab', leafId: 'leaf', writable: true }],
+    pressKeys: pressKeys ?? (async (_cli, _handle, key) => context.keys.push(key)),
+    screen,
+    wait: async () => {}
+  })
+  return context
+}
+
+test('a form presses its keys and submits from the review page', async () => {
+  const context = setupForm()
+  assert.equal(await context.next({ offer: FORM, answers: [[0, 2], [1]] }), true)
+  assert.deepEqual(context.keys, ['1', '3', '\t', '2', '\r'])
+})
+
+test('a form that does not reach the review page is not submitted, nor pressed twice', async () => {
+  const context = setupForm({ screen: async () => 'still on a question' })
+  await assert.rejects(context.next({ offer: FORM, answers: [[0], [1]] }), /review page/)
+  assert.ok(!context.keys.includes('\r'))
+  const pressed = context.keys.length
+  assert.equal(await context.next({ offer: FORM, answers: [[0], [1]] }), false)
+  assert.equal(context.keys.length, pressed)
+})
+
+test('answers that do not fit the form press nothing', async () => {
+  const context = setupForm()
+  assert.equal(await context.next({ offer: FORM, answers: [[0]] }), false)
+  assert.equal(await context.next({ offer: FORM, index: 0 }), false)
+  assert.deepEqual(context.keys, [])
+})

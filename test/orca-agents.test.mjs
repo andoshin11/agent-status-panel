@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { attentionFrom, createAgentReader, offerId, offersFrom, offersOf, parseSuggestions, questionButtons, resolveOrcaCli } from '../src/orca-agents.mjs'
+import { answerKeys, attentionFrom, createAgentReader, offerId, offersFrom, offersOf, parseSuggestions, questionButtons, questionForm, resolveOrcaCli } from '../src/orca-agents.mjs'
 
 const agent = (state, extra = {}) => ({ agentType: 'claude', state, prompt: 'secret', ...extra })
 
@@ -197,4 +197,48 @@ test('offersOf asks only about the only agent of a workspace, once it has finish
 test('a failed suggestion read costs only that button', async () => {
   const offers = await offersOf([{ path: '/a', agents: [finished()] }], async () => null, async () => { throw new Error('no log') })
   assert.equal(offers[0].suggestions.length, 1)
+})
+
+const single = (labels = ['Red', 'Blue']) => ({ question: 'Color?', multiSelect: false, options: labels.map(option) })
+const multi = (labels = ['Apple', 'Orange', 'Grape']) => ({ question: 'Fruit?', multiSelect: true, options: labels.map(option) })
+
+test('questionForm carries every question with its descriptions', () => {
+  assert.deepEqual(questionForm({ questions: [multi(['A']), single(['B'])] }), [
+    { question: 'Fruit?', multiSelect: true, options: [{ label: 'A', detail: 'about A' }] },
+    { question: 'Color?', multiSelect: false, options: [{ label: 'B', detail: 'about B' }] }
+  ])
+})
+
+test('questionForm refuses what the phone could not answer', () => {
+  assert.equal(questionForm(null), null)
+  assert.equal(questionForm({ questions: [] }), null)
+  assert.equal(questionForm({ questions: Array(5).fill(single()) }), null)
+  assert.equal(questionForm({ questions: [{ question: '', options: [option('A')] }] }), null)
+  assert.equal(questionForm({ questions: [{ question: 'Q', options: Array(10).fill(option('A')) }] }), null)
+})
+
+test('offersOf makes a form for several questions or several choices, and buttons for one choice', async () => {
+  const offer = async (questions) => (await offersOf([{ path: '/a', agents: [waiting()] }], async () => ({ toolUseId: 'toolu_1', questions })))[0]
+  const form = await offer([multi(), single()])
+  assert.equal(form.questions.length, 2)
+  assert.deepEqual(form.suggestions, [])
+  assert.equal((await offer([multi()])).questions.length, 1)
+  const buttons = await offer([single()])
+  assert.equal(buttons.questions, undefined)
+  assert.equal(buttons.suggestions.length, 2)
+})
+
+const form = [{ multiSelect: true, options: [1, 2, 3] }, { multiSelect: false, options: [1, 2] }]
+
+test('answerKeys ticks several and moves on with Tab, and a single answer moves on by itself', () => {
+  assert.deepEqual(answerKeys(form, [[1, 2], [1]]), ['2', '3', '\t', '2'])
+  assert.deepEqual(answerKeys([form[1], form[1]], [[0], [1]]), ['1', '2'])
+  assert.deepEqual(answerKeys([form[0]], [[0]]), ['1', '\t'])
+})
+
+test('answerKeys refuses answers that do not fit the form', () => {
+  for (const answers of [[[0]], [[], [0]], [[0, 0], [0]], [[0], [0, 1]], [[3], [0]], [[0], [2]], [[-1], [0]], [[0.5], [0]], 'x', null]) {
+    assert.equal(answerKeys(form, answers), null, JSON.stringify(answers))
+  }
+  assert.equal(answerKeys(null, []), null)
 })
