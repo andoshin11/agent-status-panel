@@ -42,6 +42,13 @@ const LINKS_MAX = 3
 const LINKING_STATES = new Set(['done', 'waiting', 'blocked', 'permission'])
 const NEXT_BLOCK = /```next[ \t]*\r?\n([\s\S]*?)\r?\n?```\s*$/
 const CONTROL = /[\u0000-\u001f\u007f]/
+const SCREEN_LINES = '60'
+const PERMISSION_STATES = ['waiting', 'permission']
+// Codex's permission menu. Its second option stops asking for good, so only the first is ever pressed.
+const CODEX_ALLOW_ONCE_LINE = /^\s*(?:›\s*)?1\. Yes, proceed \(y\)\s*$/m
+const CODEX_PERMISSION_FOOTER = 'Press enter to confirm or esc to cancel'
+const CODEX_EDIT_MENU = 'Would you like to make the following edits?'
+const CODEX_DESTINATION = 'Destination:'
 
 /** launchd's PATH does not reach Orca's CLI. */
 export function resolveOrcaCli(bundled = BUNDLED_CLI) {
@@ -51,6 +58,20 @@ export function resolveOrcaCli(bundled = BUNDLED_CLI) {
 /** A workspace not on screen has no tab for its pane, and its terminal only records the key. */
 export function isPane(terminal, paneKey) {
   return terminal.recordedPaneKey === paneKey || `${terminal.tabId}:${terminal.leafId}` === paneKey
+}
+
+export async function listTerminals(cli) {
+  return (await runOrca(cli, ['terminal', 'list', '--json'])).terminals
+}
+
+export async function readScreen(cli, handle) {
+  return (await runOrca(cli, ['terminal', 'read', '--terminal', handle, '--screen', '--limit', SCREEN_LINES, '--json'])).terminal.tail.join('\n')
+}
+
+/** What a pane shows now, or null when no terminal has it. */
+export async function readPaneScreen(cli, paneKey, terminals = listTerminals, screen = readScreen) {
+  const terminal = (await terminals(cli)).find((candidate) => isPane(candidate, paneKey))
+  return terminal ? screen(cli, terminal.handle) : null
 }
 
 function mainAgents(worktree) {
@@ -191,7 +212,7 @@ function describeCall({ name, input }) {
 
 async function permissionOffer(worktree, readCall) {
   const agent = soleAgent(worktree)
-  if (agent?.agentType !== 'claude' || !['waiting', 'permission'].includes(agent.state) || !agent.toolName || agent.toolName === 'AskUserQuestion') return null
+  if (agent?.agentType !== 'claude' || !PERMISSION_STATES.includes(agent.state) || !agent.toolName || agent.toolName === 'AskUserQuestion') return null
   // Orca can keep saying "waiting" after the user answered at the terminal. The transcript cannot.
   const call = await readCall(worktree.path).catch(() => null)
   if (call?.name !== agent.toolName) return null
@@ -207,6 +228,53 @@ async function permissionOffer(worktree, readCall) {
     suggestions: [
       { label: '許可', action: 'allow', detail: '今回だけ実行します' },
       { label: '拒否', action: 'deny', detail: '実行しません' }
+    ]
+  }
+}
+
+/** Keys are pressed only on Codex's menu for this very call, read from the screen just before. */
+export function isCodexPermissionMenu(screen, menuHint) {
+  return CODEX_ALLOW_ONCE_LINE.test(screen) && screen.includes(CODEX_PERMISSION_FOOTER) && screen.includes(menuHint)
+}
+
+/** The file a Codex edit would change. A long path is wrapped over several lines of the screen. */
+function codexEditTarget(screen) {
+  const lines = screen.split('\n')
+  const start = lines.findLastIndex((line) => line.trim() === CODEX_DESTINATION)
+  const end = lines.findLastIndex((line) => CODEX_ALLOW_ONCE_LINE.test(line))
+  return start >= 0 && end > start ? lines.slice(start + 1, end).map((line) => line.trim()).join('') : ''
+}
+
+/** Only a shell command and a file edit: the menus of other tools have not been seen. */
+function describeCodexCall(agent, shown) {
+  if (agent.toolName === 'apply_patch') {
+    const target = codexEditTarget(shown)
+    return target ? { what: 'ファイルの編集', summary: shorten(target, QUESTION_MAX), menuHint: CODEX_EDIT_MENU, dangerous: false } : null
+  }
+  if (agent.toolName !== 'Bash' || typeof agent.toolInput !== 'string' || !agent.toolInput.trim()) return null
+  const call = { name: 'Bash', input: { command: agent.toolInput } }
+  return { what: 'Bash', ...describeCall(call), dangerous: isDangerous(call) }
+}
+
+async function codexPermissionOffer(worktree, readPane) {
+  const agent = soleAgent(worktree)
+  if (agent?.agentType !== 'codex' || !PERMISSION_STATES.includes(agent.state) || !agent.toolName) return null
+  // Orca keeps the last toolName after the call, and other prompts also read as waiting. The menu cannot.
+  const shown = await readPane(agent.paneKey).catch(() => null)
+  const call = shown ? describeCodexCall(agent, shown) : null
+  if (!call || !isCodexPermissionMenu(shown, call.menuHint)) return null
+  return {
+    id: offerId(agent, call.summary),
+    path: worktree.path,
+    agent: agent.agentType,
+    paneKey: agent.paneKey,
+    question: `${call.what} を許可しますか？ ${call.summary}`,
+    menuHint: call.menuHint,
+    dangerous: call.dangerous,
+    suggestions: [
+      { label: '許可', action: 'allow', detail: '今回だけ実行します' },
+      // Esc ends Codex's turn: unlike Claude Code, it does not go on without the call.
+      { label: '中止', action: 'deny', detail: '実行せず、このターンを止めます' }
     ]
   }
 }
@@ -228,12 +296,12 @@ async function questionOffer(worktree, readQuestion) {
 }
 
 /** What every agent offers now: what it proposed after finishing, and what it is asking. */
-export async function offersOf(worktrees, readQuestion, readSuggestions = async () => new Map(), readCall = async () => null) {
+export async function offersOf(worktrees, readQuestion, readSuggestions = async () => new Map(), readCall = async () => null, readPane = async () => null) {
   const finished = worktrees.map(soleAgent).filter((agent) => agent?.agentType === 'claude' && agent.state === 'done')
   const shown = finished.length > 0 ? await readSuggestions(finished.map((agent) => agent.paneKey)).catch(() => new Map()) : new Map()
   const offers = offersFrom(worktrees, shown)
   for (const worktree of worktrees) {
-    const offer = (await questionOffer(worktree, readQuestion)) ?? (await permissionOffer(worktree, readCall))
+    const offer = (await questionOffer(worktree, readQuestion)) ?? (await permissionOffer(worktree, readCall)) ?? (await codexPermissionOffer(worktree, readPane))
     if (offer) offers.push(offer)
   }
   return offers
@@ -307,7 +375,7 @@ export async function readWorktrees(cli) {
  * While Orca cannot answer, the last answer stands: nothing is known to have changed, and clearing
  * it would send a notification again when Orca comes back.
  */
-export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees, readQuestion = async () => null, readSuggestions, readCall, log = () => {} } = {}) {
+export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees, readQuestion = async () => null, readSuggestions, readCall, readPane = (paneKey) => readPaneScreen(cli, paneKey), log = () => {} } = {}) {
   let attention = []
   let offers = []
   let links = []
@@ -317,7 +385,7 @@ export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees
       try {
         const worktrees = await read(cli)
         attention = attentionFrom(worktrees)
-        offers = await offersOf(worktrees, readQuestion, readSuggestions, readCall)
+        offers = await offersOf(worktrees, readQuestion, readSuggestions, readCall, readPane)
         links = linksFrom(worktrees)
         failing = false
       } catch (error) {

@@ -284,6 +284,47 @@ test('no buttons when the transcript says the call is over or is another call', 
   await none([permissionAgent(), permissionAgent({ paneKey: 'tab:other' })], bash('ls'))
 })
 
+const codexAgent = (extra = {}) => waiting({ agentType: 'codex', toolName: 'Bash', toolInput: 'touch a', ...extra })
+const codexOffers = (agents, shown) => offersOf([{ path: '/a', agents }], async () => null, undefined, undefined, async () => shown)
+const CODEX_FOOT = "› 1. Yes, proceed (y)\n  2. Yes, and don't ask again (p)\n  3. No, and tell Codex what to do differently (esc)\n  Press enter to confirm or esc to cancel"
+const CODEX_COMMAND = (command) => `Would you like to run the following command?\n  $ ${command}\n${CODEX_FOOT}`
+const CODEX_EDIT = (...path) => `Would you like to make the following edits?\n  Description: Apply proposed file edits\n  Destination:\n  ${path.join('\n  ')}\n${CODEX_FOOT}`
+
+test('a Codex command on its menu becomes allow and stop, with what it would do', async () => {
+  const [offer] = await codexOffers([codexAgent()], CODEX_COMMAND('touch a'))
+  assert.deepEqual(offer.suggestions.map(({ label, action }) => [label, action]), [['許可', 'allow'], ['中止', 'deny']])
+  assert.equal(offer.agent, 'codex')
+  assert.equal(offer.question, 'Bash を許可しますか？ touch a')
+  assert.equal(offer.menuHint, 'touch a')
+  assert.equal(offer.dangerous, false)
+})
+
+test('a dangerous Codex command asks for a second look', async () => {
+  const [offer] = await codexOffers([codexAgent({ toolInput: 'rm -rf x' })], CODEX_COMMAND('rm -rf x'))
+  assert.equal(offer.dangerous, true)
+})
+
+test('a Codex edit is described by the file on its menu, even when the path is wrapped', async () => {
+  const [offer] = await codexOffers([codexAgent({ toolName: 'apply_patch', toolInput: null })], CODEX_EDIT('/w/some/long', '/path/note.txt'))
+  assert.equal(offer.question, 'ファイルの編集 を許可しますか？ /w/some/long/path/note.txt')
+  assert.equal(offer.dangerous, false)
+})
+
+test('no Codex buttons without its menu for this very call', async () => {
+  const none = async (agents, shown) => assert.deepEqual(await codexOffers(agents, shown), [], String(shown))
+  const trust = 'Trust this folder?\n› 1. Trust and continue\n  2. Quit\n  enter continue · esc quit'
+  await none([codexAgent()], null)
+  await none([codexAgent()], '› Ask Codex to do anything')
+  await none([codexAgent()], trust)
+  await none([codexAgent()], CODEX_COMMAND('touch other'))
+  await none([codexAgent({ state: 'done' })], CODEX_COMMAND('touch a'))
+  await none([codexAgent({ state: 'working' })], CODEX_COMMAND('touch a'))
+  await none([codexAgent({ toolName: 'mcp_tool' })], CODEX_COMMAND('touch a'))
+  await none([codexAgent({ toolInput: null })], CODEX_COMMAND('touch a'))
+  await none([codexAgent({ toolName: 'apply_patch', toolInput: null })], CODEX_COMMAND('touch a'))
+  await none([codexAgent(), codexAgent({ paneKey: 'tab:other' })], CODEX_COMMAND('touch a'))
+})
+
 test('a question is not treated as a permission', async () => {
   const offers = await offersOf([{ path: '/a', agents: [waiting()] }], async () => null, undefined, async () => ({ toolUseId: 't', name: 'AskUserQuestion', input: {} }))
   assert.deepEqual(offers, [])
