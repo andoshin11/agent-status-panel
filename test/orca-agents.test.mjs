@@ -61,7 +61,7 @@ test('parseSuggestions finds nothing without a well-formed block at the very end
   }
 })
 
-const finished = (extra = {}) => agent('done', { paneKey: 'tab:leaf', stateStartedAt: 5, lastAssistantMessage: reply(JSON.stringify([proposal()])), ...extra })
+const finished = (extra = {}) => agent('done', { paneKey: 'tab:leaf', hasLivePty: true, stateStartedAt: 5, lastAssistantMessage: reply(JSON.stringify([proposal()])), ...extra })
 
 test('offersFrom keeps a workspace with one finished agent that proposed something', () => {
   assert.deepEqual(offersFrom([{ path: '/a', agents: [finished()] }]), [
@@ -79,6 +79,7 @@ test('offersFrom leaves out what a button could not reach safely', () => {
   none([finished({ state: 'waiting' })])
   none([finished({ lastAssistantMessage: 'plain' })])
   none([finished({ hasLivePty: false })])
+  none([finished({ hasLivePty: undefined })])
   none([finished()], { isArchived: true })
   none([finished({ parentPaneKey: 'p' })])
   none([finished(), finished({ paneKey: 'tab:other' })])
@@ -87,6 +88,11 @@ test('offersFrom leaves out what a button could not reach safely', () => {
 test('a subagent or a closed pane does not count as a second agent', () => {
   const agents = [finished(), finished({ paneKey: 'x', parentPaneKey: 'tab:leaf' }), finished({ paneKey: 'y', hasLivePty: false })]
   assert.equal(offersFrom([{ path: '/a', agents }]).length, 1)
+})
+
+test('the record of a closed pane does not count as a second agent', () => {
+  const agents = [finished({ paneKey: 'old', hasLivePty: undefined, lastAssistantMessage: null }), finished()]
+  assert.deepEqual(offersFrom([{ path: '/a', agents }]).map((offer) => offer.paneKey), ['tab:leaf'])
 })
 
 test('one reading gives both the attention and the offers, and a failure keeps them', async () => {
@@ -135,7 +141,7 @@ test('questionButtons leaves to the terminal what one key cannot answer', () => 
   assert.equal(questionButtons(asked({}, [option('x'), { label: '' }])), null)
 })
 
-const waiting = (extra = {}) => agent('waiting', { toolName: 'AskUserQuestion', paneKey: 'tab:leaf', stateStartedAt: 7, ...extra })
+const waiting = (extra = {}) => agent('waiting', { toolName: 'AskUserQuestion', paneKey: 'tab:leaf', hasLivePty: true, stateStartedAt: 7, ...extra })
 
 test('offersOf turns the question of the only agent into buttons', async () => {
   const offers = await offersOf([{ path: '/a', agents: [waiting()] }], async (path) => (assert.equal(path, '/a'), asked()))
