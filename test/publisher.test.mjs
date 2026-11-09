@@ -280,3 +280,38 @@ test('a dangerous command is marked on the board, and never in a push', async ()
   assert.equal(context.publisher.snapshot().sessions[0].dangerous, '1')
   assert.equal(context.delivered[0].dangerous, undefined)
 })
+
+const LINK = { title: 'PR #1 · app', url: 'https://github.com/o/app/pull/1' }
+
+function setupLinks(entries) {
+  const context = { sessions: [], delivered: [] }
+  context.publisher = createPublisher({
+    readSessions: async () => context.sessions,
+    readLinks: () => entries,
+    send: async (message) => context.delivered.push(message),
+    statePath: null,
+    sent: new Map(),
+    staleMs: STALE_MS,
+    sendText: true,
+    now: () => NOW
+  })
+  return context
+}
+
+test('links go on the card of their workspace, and never into a push', async () => {
+  const context = setupLinks([{ path: '/w/app', agent: 'claude', links: [LINK], fromReply: true }])
+  context.sessions = [session([task(1, 'One', 'in_progress')])]
+  await context.publisher.publish()
+  assert.deepEqual(JSON.parse(context.publisher.snapshot().sessions[0].links), [LINK])
+  assert.equal(context.delivered[0].links, undefined)
+})
+
+test('a link from a reply makes a card, and a pull request linked to a quiet workspace does not', async () => {
+  const replied = setupLinks([{ path: '/w/app', agent: 'claude', links: [LINK], fromReply: true }])
+  await replied.publisher.publish()
+  assert.equal(replied.publisher.snapshot().sessions.length, 1)
+  assert.equal(replied.delivered.length, 0)
+  const quiet = setupLinks([{ path: '/w/app', agent: 'claude', links: [LINK], fromReply: false }])
+  await quiet.publisher.publish()
+  assert.equal(quiet.publisher.snapshot().sessions.length, 0)
+})
