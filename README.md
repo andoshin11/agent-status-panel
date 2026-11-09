@@ -128,7 +128,8 @@ tailscale serve status      # iPhone から読む URL（https://<マシン名>.<
 | 項目 | 内容 |
 |---|---|
 | `offer` | 今の提案の ID。ターンごとに変わります。提案がなければ項目がありません |
-| `suggestions` | ボタンの文字の JSON 配列（文字列）。`prompt` は Mac mini の外に出しません |
+| `suggestions` | ボタンの文字の JSON 配列（文字列） |
+| `details` | ボタンの説明の JSON 配列（文字列）。順番は `suggestions` と同じです。提案は送られる依頼文、質問は選択肢の説明です |
 | `question` | エージェントが質問しているときの質問文。提案のときは項目がありません |
 
 ボタンを押すと、アプリが `POST /next` に `{"offer":"…","index":0}` を送ります。

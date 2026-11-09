@@ -104,13 +104,13 @@ test('one reading gives both the attention and the offers, and a failure keeps t
   assert.equal(readOffers().length, 1)
 })
 
-const option = (label) => ({ label, description: 'ignored' })
+const option = (label) => ({ label, description: `about ${label}` })
 const asked = (extra = {}, options = [option('Red'), option('Blue')]) => ({ toolUseId: 'toolu_1', questions: [{ question: ' Which  one? ', header: 'h', multiSelect: false, options, ...extra }] })
 
 test('questionButtons numbers every option in its place', () => {
   assert.deepEqual(questionButtons(asked()), {
     question: 'Which one?',
-    suggestions: [{ label: 'Red', keys: '1' }, { label: 'Blue', keys: '2' }]
+    suggestions: [{ label: 'Red', keys: '1', detail: 'about Red' }, { label: 'Blue', keys: '2', detail: 'about Blue' }]
   })
 })
 
@@ -118,6 +118,10 @@ test('questionButtons shortens long text without dropping an option', () => {
   const buttons = questionButtons(asked({}, [option('あ'.repeat(100)), option('B')]))
   assert.equal([...buttons.suggestions[0].label].length, 60)
   assert.equal(buttons.suggestions[1].keys, '2')
+})
+
+test('questionButtons keeps an option without a description, with an empty one', () => {
+  assert.equal(questionButtons(asked({}, [{ label: 'Red' }])).suggestions[0].detail, '')
 })
 
 test('questionButtons leaves to the terminal what one key cannot answer', () => {
