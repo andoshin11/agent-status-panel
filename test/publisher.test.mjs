@@ -207,17 +207,18 @@ function setupOffers({ sendText = true } = {}) {
   return context
 }
 
-test('an offer goes on the board with its labels only, and never into a push', async () => {
+test('an offer goes on the board with what its buttons show, and never into a push', async () => {
   const context = setupOffers()
   context.sessions = [session([task(1, 'One', 'completed')])]
   await context.publisher.publish()
   const [card] = context.publisher.snapshot().sessions
   assert.equal(card.offer, 'o1')
   assert.equal(card.suggestions, '["PR を作る"]')
-  assert.ok(!JSON.stringify(context.publisher.snapshot()).includes('secret prompt'))
+  assert.equal(card.details, '["secret prompt"]')
   assert.equal(context.delivered.length, 1)
   assert.equal(context.delivered[0].offer, undefined)
   assert.equal(context.delivered[0].suggestions, undefined)
+  assert.equal(context.delivered[0].details, undefined)
 })
 
 test('an offer shows a workspace without tasks on the board, and pushes nothing for it', async () => {
@@ -249,11 +250,12 @@ test('with sendText off there are no offers', async () => {
 
 test('a question goes on the board with its text, and never into a push', async () => {
   const context = setupOffers()
-  context.offers = [{ ...OFFER, question: 'Which?', suggestions: [{ label: 'Red', keys: '1' }] }]
+  context.offers = [{ ...OFFER, question: 'Which?', suggestions: [{ label: 'Red', keys: '1', detail: 'A warm color' }] }]
   context.sessions = [session([task(1, 'One', 'in_progress')])]
   await context.publisher.publish()
   const [card] = context.publisher.snapshot().sessions
   assert.equal(card.question, 'Which?')
   assert.equal(card.suggestions, '["Red"]')
+  assert.equal(card.details, '["A warm color"]')
   assert.equal(context.delivered[0].question, undefined)
 })

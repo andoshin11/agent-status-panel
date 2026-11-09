@@ -44,10 +44,18 @@ export function withOffers(sessions, offers, now) {
   return marked
 }
 
-/** The labels only: the prompts stay on this machine until a button is pressed. */
+/**
+ * What the buttons show. A proposal is described by the prompt it would send, so the user can read
+ * it before pressing; the press itself still says only which button.
+ */
 function offerFields(offer) {
   if (!offer) return {}
-  return { offer: offer.id, suggestions: JSON.stringify(offer.suggestions.map(({ label }) => label)), ...(offer.question ? { question: offer.question } : {}) }
+  return {
+    offer: offer.id,
+    suggestions: JSON.stringify(offer.suggestions.map(({ label }) => label)),
+    details: JSON.stringify(offer.suggestions.map(({ detail, prompt }) => detail ?? prompt ?? '')),
+    ...(offer.question ? { question: offer.question } : {})
+  }
 }
 
 export async function loadState(path) {

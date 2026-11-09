@@ -15,6 +15,7 @@ const PROMPT_MAX = 300
 // The last thing in the reply, as the agents are told to write it.
 const QUESTION_MAX = 300
 const OPTION_MAX = 60
+const DETAIL_MAX = 200
 // One key each: the menu takes the number of an option as a single key press.
 const OPTIONS_MAX = 9
 const NEXT_BLOCK = /```next[ \t]*\r?\n([\s\S]*?)\r?\n?```\s*$/
@@ -97,7 +98,11 @@ export function questionButtons(asked) {
   if (!options.every((option) => typeof option?.label === 'string' && option.label.trim())) return null
   return {
     question: shorten(question, QUESTION_MAX),
-    suggestions: options.map((option, index) => ({ label: shorten(option.label, OPTION_MAX), keys: String(index + 1) }))
+    suggestions: options.map((option, index) => ({
+      label: shorten(option.label, OPTION_MAX),
+      keys: String(index + 1),
+      detail: typeof option.description === 'string' ? shorten(option.description, DETAIL_MAX) : ''
+    }))
   }
 }
 
