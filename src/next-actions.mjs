@@ -1,7 +1,7 @@
 // Sends an action an agent proposed, or the answer to its question, when the user presses a button.
 // The phone says only which button: what to send comes from what the agent wrote, read again now,
 // so a phone cannot send anything else and a button from an earlier turn does nothing.
-import { offersOf, readWorktrees, resolveOrcaCli, runOrca } from './orca-agents.mjs'
+import { isPane, offersOf, readWorktrees, resolveOrcaCli, runOrca } from './orca-agents.mjs'
 
 const USED_MAX = 256
 const SUBMIT_WAIT_SECONDS = '8'
@@ -37,17 +37,12 @@ async function sendKeys(cli, handle, keys) {
   if (!result.send?.accepted) throw new Error('the terminal did not accept the key')
 }
 
-/** A workspace not on screen has no tab for its pane, and its terminal only records the key. */
-function isPane(terminal, paneKey) {
-  return terminal.recordedPaneKey === paneKey || `${terminal.tabId}:${terminal.leafId}` === paneKey
-}
-
 /**
  * @returns a function that takes `{ offer, index }` and resolves to true once the agent has the
  *   prompt, false when that button is no longer on offer, or 'typing' when a draft in Codex's
  *   input box would be sent along with it. It throws when sending fails.
  */
-export function createNextSender({ cli = resolveOrcaCli(), read = readWorktrees, readQuestion = async () => null, terminals = listTerminals, send = sendPrompt, pressKeys = sendKeys, stash = stashDraft, screen = readScreen, onSent = () => {}, log = () => {} } = {}) {
+export function createNextSender({ cli = resolveOrcaCli(), read = readWorktrees, readQuestion = async () => null, readSuggestions, terminals = listTerminals, send = sendPrompt, pressKeys = sendKeys, stash = stashDraft, screen = readScreen, onSent = () => {}, log = () => {} } = {}) {
   const used = new Set()
 
   function take(offer) {
@@ -57,7 +52,7 @@ export function createNextSender({ cli = resolveOrcaCli(), read = readWorktrees,
 
   return async function next({ offer, index }) {
     if (used.has(offer)) return false
-    const found = (await offersOf(await read(cli), readQuestion)).find((candidate) => candidate.id === offer)
+    const found = (await offersOf(await read(cli), readQuestion, readSuggestions)).find((candidate) => candidate.id === offer)
     const suggestion = found?.suggestions[index]
     if (!suggestion) return false
     const terminal = (await terminals(cli)).find((candidate) => isPane(candidate, found.paneKey) && candidate.writable)

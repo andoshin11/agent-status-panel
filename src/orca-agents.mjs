@@ -26,6 +26,11 @@ export function resolveOrcaCli(bundled = BUNDLED_CLI) {
   return existsSync(bundled) ? bundled : 'orca'
 }
 
+/** A workspace not on screen has no tab for its pane, and its terminal only records the key. */
+export function isPane(terminal, paneKey) {
+  return terminal.recordedPaneKey === paneKey || `${terminal.tabId}:${terminal.leafId}` === paneKey
+}
+
 function mainAgents(worktree) {
   return (worktree.agents ?? []).filter((agent) => TRACKED_AGENTS.has(agent.agentType) && !agent.parentPaneKey)
 }
@@ -117,8 +122,10 @@ async function questionOffer(worktree, readQuestion) {
 }
 
 /** What every agent offers now: what it proposed after finishing, and what it is asking. */
-export async function offersOf(worktrees, readQuestion) {
-  const offers = offersFrom(worktrees)
+export async function offersOf(worktrees, readQuestion, readSuggestions = async () => new Map()) {
+  const finished = worktrees.map(soleAgent).filter((agent) => agent?.agentType === 'claude' && agent.state === 'done')
+  const shown = finished.length > 0 ? await readSuggestions(finished.map((agent) => agent.paneKey)).catch(() => new Map()) : new Map()
+  const offers = offersFrom(worktrees, shown)
   for (const worktree of worktrees) {
     const offer = await questionOffer(worktree, readQuestion)
     if (offer) offers.push(offer)
@@ -129,15 +136,19 @@ export async function offersOf(worktrees, readQuestion) {
 /**
  * One entry per workspace whose agent finished and proposed something. A workspace with several
  * main agents has none: the board shows one card for it, so a button could not say which it means.
+ * @param shown  the suggestion Claude Code shows in the input box of each pane, as one more button
  */
-export function offersFrom(worktrees) {
+export function offersFrom(worktrees, shown = new Map()) {
   const offers = []
   for (const worktree of worktrees) {
     const agent = soleAgent(worktree)
     if (agent?.state !== 'done') continue
     const suggestions = parseSuggestions(agent.lastAssistantMessage)
+    const text = shown.get(agent.paneKey)
+    const extra = text ? { label: shorten(text, LABEL_MAX), prompt: text, detail: '' } : null
+    if (extra && isSuggestion(extra) && !suggestions.some(({ prompt }) => prompt === text)) suggestions.push(extra)
     if (suggestions.length === 0) continue
-    offers.push({ id: offerId(agent), path: worktree.path, agent: agent.agentType, paneKey: agent.paneKey, suggestions })
+    offers.push({ id: offerId(agent, text ?? ''), path: worktree.path, agent: agent.agentType, paneKey: agent.paneKey, suggestions })
   }
   return offers
 }
@@ -168,7 +179,7 @@ export async function readWorktrees(cli) {
  * While Orca cannot answer, the last answer stands: nothing is known to have changed, and clearing
  * it would send a notification again when Orca comes back.
  */
-export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees, readQuestion = async () => null, log = () => {} } = {}) {
+export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees, readQuestion = async () => null, readSuggestions, log = () => {} } = {}) {
   let attention = []
   let offers = []
   let failing = false
@@ -177,7 +188,7 @@ export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees
       try {
         const worktrees = await read(cli)
         attention = attentionFrom(worktrees)
-        offers = await offersOf(worktrees, readQuestion)
+        offers = await offersOf(worktrees, readQuestion, readSuggestions)
         failing = false
       } catch (error) {
         if (!failing) log(`keeping the last agent states: ${error.message}`)

@@ -15,6 +15,7 @@ import { createFcmSender } from '../src/fcm.mjs'
 import { buildPlist, LABEL } from '../src/launchd.mjs'
 import { createNextSender } from '../src/next-actions.mjs'
 import { createAgentReader } from '../src/orca-agents.mjs'
+import { createSuggestionReader } from '../src/prompt-suggestions.mjs'
 import { createPublisher, loadState } from '../src/publisher.mjs'
 import { startStatusServer, STATUS_PATH } from '../src/server.mjs'
 import { createSessionReader, progressDir } from '../src/sessions.mjs'
@@ -64,9 +65,10 @@ const commands = {
     const { config, send, register } = await makeSender()
     const file = statePath(home)
     const readQuestion = createQuestionReader(home)
+    const readSuggestions = createSuggestionReader({ home })
     const { publish, snapshot } = createPublisher({
       readSessions: createSessionReader({ home }),
-      ...createAgentReader({ readQuestion, log }),
+      ...createAgentReader({ readQuestion, readSuggestions, log }),
       send,
       statePath: file,
       sent: await loadState(file),
@@ -79,7 +81,7 @@ const commands = {
     log('watching the task lists')
     if (config.httpPort !== null) {
       // The agent is at work once it has the prompt, so the buttons leave the board right away.
-      const next = createNextSender({ readQuestion, onSent: () => void daemon.run(), log })
+      const next = createNextSender({ readQuestion, readSuggestions, onSent: () => void daemon.run(), log })
       await startStatusServer({ port: config.httpPort, snapshot, register, next, allowedLogin: config.allowedLogin })
       log(`serving the sessions at http://127.0.0.1:${config.httpPort}${STATUS_PATH}`)
     }

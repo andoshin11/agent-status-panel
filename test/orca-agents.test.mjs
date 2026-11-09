@@ -161,3 +161,40 @@ test('offersOf reads no question where a button could not answer it', async () =
 test('a transcript that cannot be read costs only the buttons', async () => {
   assert.deepEqual(await offersOf([{ path: '/a', agents: [waiting()] }], async () => { throw new Error('gone') }), [])
 })
+
+test('the suggestion in the input box becomes one more button', () => {
+  const shown = new Map([['tab:leaf', '続きを調べてください']])
+  const [offer] = offersFrom([{ path: '/a', agents: [finished()] }], shown)
+  assert.deepEqual(offer.suggestions.at(-1), { label: '続きを調べてください', prompt: '続きを調べてください', detail: '' })
+  assert.equal(offer.suggestions.length, 2)
+})
+
+test('a suggestion alone is enough for buttons, and changes the offer', () => {
+  const plain = finished({ lastAssistantMessage: 'done' })
+  const shown = new Map([['tab:leaf', '次へ']])
+  const [offer] = offersFrom([{ path: '/a', agents: [plain] }], shown)
+  assert.deepEqual(offer.suggestions.map(({ prompt }) => prompt), ['次へ'])
+  assert.notEqual(offer.id, offerId(plain))
+})
+
+test('a suggestion the agent also proposed is shown once, and a bad one is left out', () => {
+  assert.equal(offersFrom([{ path: '/a', agents: [finished()] }], new Map([['tab:leaf', 'PR を作ってください']]))[0].suggestions.length, 1)
+  assert.equal(offersFrom([{ path: '/a', agents: [finished()] }], new Map([['tab:leaf', '-x']]))[0].suggestions.length, 1)
+  assert.equal(offersFrom([{ path: '/a', agents: [finished()] }], new Map([['tab:leaf', 'あ'.repeat(301)]]))[0].suggestions.length, 1)
+})
+
+test('offersOf asks only about the only agent of a workspace, once it has finished', async () => {
+  const asked = []
+  const read = async (panes) => (asked.push(panes), new Map())
+  await offersOf([
+    { path: '/a', agents: [finished()] },
+    { path: '/b', agents: [finished({ paneKey: 'codex', agentType: 'codex' })] },
+    { path: '/c', agents: [finished({ paneKey: 'busy', state: 'working' })] }
+  ], async () => null, read)
+  assert.deepEqual(asked, [['tab:leaf']])
+})
+
+test('a failed suggestion read costs only that button', async () => {
+  const offers = await offersOf([{ path: '/a', agents: [finished()] }], async () => null, async () => { throw new Error('no log') })
+  assert.equal(offers[0].suggestions.length, 1)
+})
