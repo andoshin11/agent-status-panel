@@ -271,3 +271,12 @@ test('a form goes on the board, and never into a push', async () => {
   assert.equal(card.suggestions, '[]')
   assert.equal(context.delivered[0].questions, undefined)
 })
+
+test('a dangerous command is marked on the board, and never in a push', async () => {
+  const context = setupOffers()
+  context.offers = [{ ...OFFER, question: 'Bash を許可しますか？ rm x', dangerous: true, suggestions: [{ label: '許可', action: 'allow', detail: '' }] }]
+  context.sessions = [session([task(1, 'One', 'in_progress')])]
+  await context.publisher.publish()
+  assert.equal(context.publisher.snapshot().sessions[0].dangerous, '1')
+  assert.equal(context.delivered[0].dangerous, undefined)
+})

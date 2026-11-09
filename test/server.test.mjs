@@ -89,7 +89,7 @@ test('a button press reaches the agent and says whether it was still on offer', 
   const { server, press } = await serveNext(async (button) => (pressed.push(button), button.offer === 'live'))
   t.after(() => server.close())
   assert.equal((await press(JSON.stringify({ offer: 'live', index: 1, extra: 'ignored' }))).status, 204)
-  assert.deepEqual(pressed, [{ offer: 'live', index: 1 }])
+  assert.deepEqual(pressed, [{ offer: 'live', index: 1, confirmed: false }])
   assert.equal((await press(JSON.stringify({ offer: 'old', index: 0 }))).status, 409)
 })
 
@@ -108,6 +108,16 @@ test('a press can carry the answers of a form', async (t) => {
   for (const answers of ['x', [0], [['a']], [[0.5]]]) {
     assert.equal((await press(JSON.stringify({ offer: 'a', answers }))).status, 400, JSON.stringify(answers))
   }
+})
+
+test('a press passes on a confirmation, and says when one is needed', async (t) => {
+  const pressed = []
+  const { server, press } = await serveNext(async (button) => (pressed.push(button), button.confirmed ? true : 'confirm'))
+  t.after(() => server.close())
+  assert.equal((await press(JSON.stringify({ offer: 'a', index: 0 }))).status, 428)
+  assert.equal((await press(JSON.stringify({ offer: 'a', index: 0, confirmed: true }))).status, 204)
+  assert.equal((await press(JSON.stringify({ offer: 'a', index: 0, confirmed: 'yes' }))).status, 428)
+  assert.deepEqual(pressed.map((button) => button.confirmed), [false, true, false])
 })
 
 test('only the allowed login can press a button', async (t) => {

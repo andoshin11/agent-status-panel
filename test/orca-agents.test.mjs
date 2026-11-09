@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { answerKeys, attentionFrom, createAgentReader, offerId, offersFrom, offersOf, parseSuggestions, questionButtons, questionForm, resolveOrcaCli } from '../src/orca-agents.mjs'
+import { answerKeys, attentionFrom, createAgentReader, isDangerous, offerId, offersFrom, offersOf, parseSuggestions, questionButtons, questionForm, resolveOrcaCli } from '../src/orca-agents.mjs'
 
 const agent = (state, extra = {}) => ({ agentType: 'claude', state, prompt: 'secret', ...extra })
 
@@ -241,4 +241,50 @@ test('answerKeys refuses answers that do not fit the form', () => {
     assert.equal(answerKeys(form, answers), null, JSON.stringify(answers))
   }
   assert.equal(answerKeys(null, []), null)
+})
+
+const bash = (command) => ({ toolUseId: 'toolu_b', name: 'Bash', input: { command } })
+const permissionAgent = (extra = {}) => waiting({ toolName: 'Bash', ...extra })
+
+test('isDangerous catches the commands that deserve a second look', () => {
+  for (const command of ['rm -rf x', 'cd a && rm b', 'sudo ls', 'git push --force', 'git push origin main -f', 'git push --force-with-lease', 'git reset --hard', 'git clean -fd', 'kubectl delete pod a', 'terraform apply', 'psql -c "DROP TABLE x"']) {
+    assert.equal(isDangerous(bash(command)), true, command)
+  }
+})
+
+test('isDangerous leaves ordinary commands to one tap', () => {
+  for (const command of ['ls', 'git push origin main', 'npm run format', 'cat firmware.txt', 'git status']) {
+    assert.equal(isDangerous(bash(command)), false, command)
+  }
+  assert.equal(isDangerous({ name: 'Write', input: { file_path: 'rm' } }), false)
+})
+
+test('a tool waiting for permission becomes allow and deny, with what it would do', async () => {
+  const [offer] = await offersOf([{ path: '/a', agents: [permissionAgent()] }], async () => null, undefined, async () => bash('touch a'))
+  assert.deepEqual(offer.suggestions.map(({ label, action }) => [label, action]), [['許可', 'allow'], ['拒否', 'deny']])
+  assert.equal(offer.question, 'Bash を許可しますか？ touch a')
+  assert.equal(offer.dangerous, false)
+  assert.equal(offer.menuHint, 'touch a')
+  assert.equal(offer.id, offerId(permissionAgent(), 'toolu_b'))
+})
+
+test('a file tool is described and found on its menu by the file', async () => {
+  const call = { toolUseId: 't', name: 'Write', input: { file_path: '/w/memo.txt', content: 'secret' } }
+  const [offer] = await offersOf([{ path: '/a', agents: [permissionAgent({ toolName: 'Write' })] }], async () => null, undefined, async () => call)
+  assert.equal(offer.question, 'Write を許可しますか？ /w/memo.txt')
+  assert.equal(offer.menuHint, 'memo.txt')
+})
+
+test('no buttons when the transcript says the call is over or is another call', async () => {
+  const none = async (agents, call) => assert.deepEqual(await offersOf([{ path: '/a', agents }], async () => null, undefined, async () => call), [])
+  await none([permissionAgent()], null)
+  await none([permissionAgent()], { toolUseId: 't', name: 'Read', input: {} })
+  await none([permissionAgent({ state: 'working' })], bash('ls'))
+  await none([permissionAgent({ agentType: 'codex' })], bash('ls'))
+  await none([permissionAgent(), permissionAgent({ paneKey: 'tab:other' })], bash('ls'))
+})
+
+test('a question is not treated as a permission', async () => {
+  const offers = await offersOf([{ path: '/a', agents: [waiting()] }], async () => null, undefined, async () => ({ toolUseId: 't', name: 'AskUserQuestion', input: {} }))
+  assert.deepEqual(offers, [])
 })

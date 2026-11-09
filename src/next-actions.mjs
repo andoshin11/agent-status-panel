@@ -14,6 +14,11 @@ const CODEX_EMPTY_HINT = '? for shortcuts'
 const KEY_WAIT_MS = 250
 const REVIEW_WAIT_MS = 800
 const SUBMIT_KEY = '\r'
+const ESCAPE_KEY = '\u001b'
+const ALLOW_ONCE_KEY = '1'
+// The first option differs from nothing else on the menu: the other numbers change with the tool.
+const ALLOW_ONCE_LINE = /^\s*(?:❯\s*)?1\. Yes\s*$/m
+const PERMISSION_FOOTER = 'Esc to cancel'
 // On the review page the menu shows after the last question.
 const REVIEW_PAGE = 'Submit answers'
 
@@ -42,12 +47,17 @@ async function sendKeys(cli, handle, keys) {
   if (!result.send?.accepted) throw new Error('the terminal did not accept the key')
 }
 
+/** Keys are pressed only on the menu for this very call, read from the screen just before. */
+export function isPermissionMenu(screen, menuHint) {
+  return ALLOW_ONCE_LINE.test(screen) && screen.includes(PERMISSION_FOOTER) && screen.includes(menuHint)
+}
+
 /**
  * @returns a function that takes `{ offer, index }` and resolves to true once the agent has the
- *   prompt, false when that button is no longer on offer, or 'typing' when a draft in Codex's
- *   input box would be sent along with it. It throws when sending fails.
+ *   prompt, false when that button is no longer on offer, 'typing' when a draft in Codex's
+ *   input box would be sent along with it, or 'confirm' to allow a dangerous command unconfirmed. It throws when sending fails.
  */
-export function createNextSender({ cli = resolveOrcaCli(), read = readWorktrees, readQuestion = async () => null, readSuggestions, terminals = listTerminals, send = sendPrompt, pressKeys = sendKeys, stash = stashDraft, screen = readScreen, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), onSent = () => {}, log = () => {} } = {}) {
+export function createNextSender({ cli = resolveOrcaCli(), read = readWorktrees, readQuestion = async () => null, readSuggestions, readCall, terminals = listTerminals, send = sendPrompt, pressKeys = sendKeys, stash = stashDraft, screen = readScreen, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), onSent = () => {}, log = () => {} } = {}) {
   const used = new Set()
 
   function take(offer) {
@@ -66,20 +76,23 @@ export function createNextSender({ cli = resolveOrcaCli(), read = readWorktrees,
     await pressKeys(cli, handle, SUBMIT_KEY)
   }
 
-  return async function next({ offer, index, answers }) {
+  return async function next({ offer, index, answers, confirmed = false }) {
     if (used.has(offer)) return false
-    const found = (await offersOf(await read(cli), readQuestion, readSuggestions)).find((candidate) => candidate.id === offer)
+    const found = (await offersOf(await read(cli), readQuestion, readSuggestions, readCall)).find((candidate) => candidate.id === offer)
     const keys = answers ? answerKeys(found?.questions, answers) : null
     const suggestion = answers ? null : found?.suggestions[index]
     if (!keys && !suggestion) return false
+    if (suggestion?.action === 'allow' && found.dangerous && !confirmed) return 'confirm'
     const terminal = (await terminals(cli)).find((candidate) => isPane(candidate, found.paneKey) && candidate.writable)
     if (!terminal) return false
+    if (suggestion?.action && !isPermissionMenu(await screen(cli, terminal.handle), found.menuHint)) return false
     if (found.agent === 'codex' && suggestion && !suggestion.keys && !(await screen(cli, terminal.handle)).includes(CODEX_EMPTY_HINT)) return 'typing'
     // Checked again here, right before the send: a second press may have arrived during the reads.
     if (used.has(offer)) return false
     take(offer)
     try {
       if (keys) await answerForm(terminal.handle, keys)
+      else if (suggestion.action) await pressKeys(cli, terminal.handle, suggestion.action === 'allow' ? ALLOW_ONCE_KEY : ESCAPE_KEY)
       else if (suggestion.keys) await pressKeys(cli, terminal.handle, suggestion.keys)
       else {
         if (found.agent === 'claude') await stash(cli, terminal.handle)
@@ -90,7 +103,7 @@ export function createNextSender({ cli = resolveOrcaCli(), read = readWorktrees,
       if (!keys) used.delete(offer)
       throw error
     }
-    log(`sent ${keys || suggestion.keys ? 'an answer' : 'a proposed action'} to a ${found.agent} session`)
+    log(`sent ${suggestion?.action ? `a permission decision (${suggestion.action})` : keys || suggestion.keys ? 'an answer' : 'a proposed action'} to a ${found.agent} session`)
     onSent()
     return true
   }

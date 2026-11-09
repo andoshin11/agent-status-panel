@@ -63,16 +63,17 @@ async function pressNext(request, response, next, allowedLogin) {
   if (text === null) return reply(response, 413, { error: 'too large' })
   let press
   try {
-    const { offer, index, answers } = JSON.parse(text)
+    const { offer, index, answers, confirmed } = JSON.parse(text)
     const isAnswers = Array.isArray(answers) && answers.every((chosen) => Array.isArray(chosen) && chosen.every(Number.isInteger))
     if (typeof offer !== 'string' || (!Number.isInteger(index) && !isAnswers)) throw new TypeError('not a button')
-    press = isAnswers ? { offer, answers } : { offer, index }
+    press = isAnswers ? { offer, answers } : { offer, index, confirmed: confirmed === true }
   } catch {
     return reply(response, 400, { error: 'bad button' })
   }
   try {
     const result = await next(press)
     if (result === 'typing') return reply(response, 423, { error: 'the input box has a draft' })
+    if (result === 'confirm') return reply(response, 428, { error: 'this command needs confirming' })
     if (result) return reply(response, 204)
     reply(response, 409, { error: 'no longer on offer' })
   } catch {
