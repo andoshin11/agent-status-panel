@@ -77,7 +77,8 @@ export function offerId(agent, extra = '') {
 
 function soleAgent(worktree) {
   if (worktree.isArchived) return null
-  const agents = mainAgents(worktree).filter((agent) => agent.hasLivePty !== false)
+  // Orca keeps the record of a pane that has closed, without this field.
+  const agents = mainAgents(worktree).filter((agent) => agent.hasLivePty === true)
   return agents.length === 1 ? agents[0] : null
 }
 

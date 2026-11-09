@@ -4,7 +4,7 @@ import { createNextSender } from '../src/next-actions.mjs'
 import { offerId } from '../src/orca-agents.mjs'
 
 const reply = '```next\n[{"label":"A","prompt":"do a"},{"label":"B","prompt":"do b"}]\n```'
-const agent = { agentType: 'claude', state: 'done', paneKey: 'tab:leaf', stateStartedAt: 5, lastAssistantMessage: reply }
+const agent = { agentType: 'claude', state: 'done', paneKey: 'tab:leaf', hasLivePty: true, stateStartedAt: 5, lastAssistantMessage: reply }
 const OFFER = offerId(agent)
 
 function setup({ worktrees = [{ path: '/a', agents: [agent] }], terminals = [{ handle: 'h1', tabId: 'tab', leafId: 'leaf', writable: true }], send } = {}) {
@@ -80,7 +80,7 @@ test('a failed send can be tried again', async () => {
 })
 
 const question = { toolUseId: 'toolu_1', questions: [{ question: 'Which?', multiSelect: false, options: [{ label: 'Red' }, { label: 'Blue' }] }] }
-const asking = { agentType: 'claude', state: 'waiting', toolName: 'AskUserQuestion', paneKey: 'tab:leaf', stateStartedAt: 7 }
+const asking = { agentType: 'claude', state: 'waiting', toolName: 'AskUserQuestion', paneKey: 'tab:leaf', hasLivePty: true, stateStartedAt: 7 }
 const ASKED = offerId(asking, 'toolu_1')
 
 function setupQuestion({ read = async () => question } = {}) {
