@@ -13,7 +13,8 @@ import { apnsDevicesPath, configPath, DEFAULT_STALE_MINUTES, loadApnsKey, loadCo
 import { startDaemon } from '../src/daemon.mjs'
 import { createFcmSender } from '../src/fcm.mjs'
 import { buildPlist, LABEL } from '../src/launchd.mjs'
-import { createAttentionReader } from '../src/orca-agents.mjs'
+import { createNextSender } from '../src/next-actions.mjs'
+import { createAgentReader } from '../src/orca-agents.mjs'
 import { createPublisher, loadState } from '../src/publisher.mjs'
 import { startStatusServer, STATUS_PATH } from '../src/server.mjs'
 import { createSessionReader, progressDir } from '../src/sessions.mjs'
@@ -64,7 +65,7 @@ const commands = {
     const file = statePath(home)
     const { publish, snapshot } = createPublisher({
       readSessions: createSessionReader({ home }),
-      readAttention: createAttentionReader({ log }),
+      ...createAgentReader({ log }),
       send,
       statePath: file,
       sent: await loadState(file),
@@ -76,7 +77,9 @@ const commands = {
     await daemon.ready
     log('watching the task lists')
     if (config.httpPort !== null) {
-      await startStatusServer({ port: config.httpPort, snapshot, register })
+      // The agent is at work once it has the prompt, so the buttons leave the board right away.
+      const next = createNextSender({ onSent: () => void daemon.run(), log })
+      await startStatusServer({ port: config.httpPort, snapshot, register, next, allowedLogin: config.allowedLogin })
       log(`serving the sessions at http://127.0.0.1:${config.httpPort}${STATUS_PATH}`)
     }
   },
@@ -85,7 +88,7 @@ const commands = {
   async 'dry-run'() {
     const { publish } = createPublisher({
       readSessions: createSessionReader({ home }),
-      readAttention: createAttentionReader({ log }),
+      ...createAgentReader({ log }),
       send: async () => {},
       statePath: null,
       sent: new Map(),

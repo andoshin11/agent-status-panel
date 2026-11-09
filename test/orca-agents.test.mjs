@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { attentionFrom, createAttentionReader, resolveOrcaCli } from '../src/orca-agents.mjs'
+import { attentionFrom, createAgentReader, offerId, offersFrom, parseSuggestions, resolveOrcaCli } from '../src/orca-agents.mjs'
 
 const agent = (state, extra = {}) => ({ agentType: 'claude', state, prompt: 'secret', ...extra })
 
@@ -29,7 +29,7 @@ test('the reader keeps the last answer while Orca cannot answer, and logs that o
     if (fail) throw new Error('not running')
     return [{ path: '/a', agents: [agent('waiting')] }]
   }
-  const readAttention = createAttentionReader({ cli: 'orca', read, log: (message) => logs.push(message) })
+  const { readAttention } = createAgentReader({ cli: 'orca', read, log: (message) => logs.push(message) })
   const first = await readAttention()
   assert.equal(first.length, 1)
   fail = true
@@ -40,4 +40,66 @@ test('the reader keeps the last answer while Orca cannot answer, and logs that o
 
 test('resolveOrcaCli falls back to PATH', () => {
   assert.equal(resolveOrcaCli('/no/such/orca'), 'orca')
+})
+
+const reply = (json) => `done\n\n\`\`\`next\n${json}\n\`\`\`\n`
+const proposal = (label = 'PR を作る', prompt = 'PR を作ってください') => ({ label, prompt })
+
+test('parseSuggestions reads the block at the end of a reply', () => {
+  assert.deepEqual(parseSuggestions(reply(JSON.stringify([proposal(' PR を作る ', ' PR を作ってください ')]))), [proposal()])
+})
+
+test('parseSuggestions takes three and drops what cannot be a button', () => {
+  const good = proposal()
+  const list = [good, proposal('', 'x'), proposal('x', ''), proposal('あ'.repeat(31)), proposal('x', 'あ'.repeat(301)), proposal('x', '--flag'), proposal('x', 'a\u001b[2J'), { label: 1, prompt: 'x' }, good, good, good]
+  assert.deepEqual(parseSuggestions(reply(JSON.stringify(list))), [good, good, good])
+})
+
+test('parseSuggestions finds nothing without a well-formed block at the very end', () => {
+  for (const message of [null, '', 'plain', reply('{'), reply('{"label":"x"}'), `${reply('[]')}and more`, '```json\n[]\n```']) {
+    assert.deepEqual(parseSuggestions(message), [])
+  }
+})
+
+const finished = (extra = {}) => agent('done', { paneKey: 'tab:leaf', stateStartedAt: 5, lastAssistantMessage: reply(JSON.stringify([proposal()])), ...extra })
+
+test('offersFrom keeps a workspace with one finished agent that proposed something', () => {
+  assert.deepEqual(offersFrom([{ path: '/a', agents: [finished()] }]), [
+    { id: offerId(finished()), path: '/a', agent: 'claude', paneKey: 'tab:leaf', suggestions: [proposal()] }
+  ])
+})
+
+test('an offer changes with every turn', () => {
+  assert.notEqual(offerId(finished()), offerId(finished({ stateStartedAt: 6 })))
+})
+
+test('offersFrom leaves out what a button could not reach safely', () => {
+  const none = (agents, extra = {}) => assert.deepEqual(offersFrom([{ path: '/a', agents, ...extra }]), [])
+  none([finished({ state: 'working' })])
+  none([finished({ state: 'waiting' })])
+  none([finished({ lastAssistantMessage: 'plain' })])
+  none([finished({ hasLivePty: false })])
+  none([finished()], { isArchived: true })
+  none([finished({ parentPaneKey: 'p' })])
+  none([finished(), finished({ paneKey: 'tab:other' })])
+})
+
+test('a subagent or a closed pane does not count as a second agent', () => {
+  const agents = [finished(), finished({ paneKey: 'x', parentPaneKey: 'tab:leaf' }), finished({ paneKey: 'y', hasLivePty: false })]
+  assert.equal(offersFrom([{ path: '/a', agents }]).length, 1)
+})
+
+test('one reading gives both the attention and the offers, and a failure keeps them', async () => {
+  let fail = false
+  const read = async () => {
+    if (fail) throw new Error('not running')
+    return [{ path: '/a', agents: [finished()] }]
+  }
+  const { readAttention, readOffers } = createAgentReader({ cli: 'orca', read })
+  assert.deepEqual(readOffers(), [])
+  await readAttention()
+  assert.equal(readOffers().length, 1)
+  fail = true
+  await readAttention()
+  assert.equal(readOffers().length, 1)
 })

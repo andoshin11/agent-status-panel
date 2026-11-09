@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { DEVICES_PATH, startStatusServer, STATUS_PATH } from '../src/server.mjs'
+import { DEVICES_PATH, NEXT_PATH, startStatusServer, STATUS_PATH } from '../src/server.mjs'
 
 async function serve(snapshot, register = null) {
   const server = await startStatusServer({ port: 0, snapshot, register })
@@ -72,4 +72,55 @@ test('without notifications there is nothing to register with', async (t) => {
   const { server, url } = await serve(() => null)
   t.after(() => server.close())
   assert.equal((await fetch(url(DEVICES_PATH), { method: 'POST', body: '{}' })).status, 404)
+})
+
+const LOGIN = 'me@example.com'
+
+async function serveNext(next, allowedLogin = LOGIN) {
+  const server = await startStatusServer({ port: 0, snapshot: () => null, next, allowedLogin })
+  const { address, port } = server.address()
+  const press = (body, login = LOGIN) =>
+    fetch(`http://${address}:${port}${NEXT_PATH}`, { method: 'POST', body, headers: login ? { 'tailscale-user-login': login } : {} })
+  return { server, press, url: `http://${address}:${port}${NEXT_PATH}` }
+}
+
+test('a button press reaches the agent and says whether it was still on offer', async (t) => {
+  const pressed = []
+  const { server, press } = await serveNext(async (button) => (pressed.push(button), button.offer === 'live'))
+  t.after(() => server.close())
+  assert.equal((await press(JSON.stringify({ offer: 'live', index: 1, extra: 'ignored' }))).status, 204)
+  assert.deepEqual(pressed, [{ offer: 'live', index: 1 }])
+  assert.equal((await press(JSON.stringify({ offer: 'old', index: 0 }))).status, 409)
+})
+
+test('only the allowed login can press a button', async (t) => {
+  let calls = 0
+  const { server, press } = await serveNext(async () => ++calls > 0)
+  t.after(() => server.close())
+  const body = JSON.stringify({ offer: 'a', index: 0 })
+  assert.equal((await press(body, null)).status, 403)
+  assert.equal((await press(body, 'other@example.com')).status, 403)
+  assert.equal(calls, 0)
+})
+
+test('a press refuses a bad body, another method, and a failed send', async (t) => {
+  const { server, press, url } = await serveNext(async ({ offer }) => {
+    if (offer === 'broken') throw new Error('orca is down')
+    return true
+  })
+  t.after(() => server.close())
+  for (const body of ['{', 'null', '{"offer":1,"index":0}', '{"offer":"a"}', '{"offer":"a","index":0.5}']) {
+    assert.equal((await press(body)).status, 400, body)
+  }
+  assert.equal((await press(JSON.stringify({ offer: 'x'.repeat(2000), index: 0 }))).status, 413)
+  assert.equal((await press(JSON.stringify({ offer: 'broken', index: 0 }))).status, 502)
+  const get = await fetch(url)
+  assert.equal(get.status, 405)
+  assert.equal(get.headers.get('allow'), 'POST')
+})
+
+test('without an allowed login there are no buttons', async (t) => {
+  const { server, press } = await serveNext(async () => true, null)
+  t.after(() => server.close())
+  assert.equal((await press(JSON.stringify({ offer: 'a', index: 0 }))).status, 404)
 })
