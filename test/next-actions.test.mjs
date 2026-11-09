@@ -236,6 +236,45 @@ test('nothing is pressed unless the menu for this command is on screen', async (
   }
 })
 
+const codexPermission = { agentType: 'codex', state: 'waiting', toolName: 'Bash', paneKey: 'tab:leaf', hasLivePty: true, stateStartedAt: 7 }
+const CODEX_MENU = (command) => `Would you like to run the following command?\n  $ ${command}\n› 1. Yes, proceed (y)\n  2. Yes, and don't ask again for commands that start with \`${command}\` (p)\n  3. No, and tell Codex what to do differently (esc)\n  Press enter to confirm or esc to cancel`
+
+function setupCodexPermission({ command = 'touch a', screen } = {}) {
+  const context = { keys: [], id: offerId(codexPermission, command) }
+  context.next = createNextSender({
+    cli: 'orca',
+    read: async () => [{ path: '/a', agents: [{ ...codexPermission, toolInput: command }] }],
+    terminals: async () => [{ handle: 'h1', tabId: 'tab', leafId: 'leaf', writable: true }],
+    pressKeys: async (_cli, _handle, key) => context.keys.push(key),
+    screen: screen ?? (async () => CODEX_MENU(command))
+  })
+  return context
+}
+
+test('Codex: allow presses 1 and stop presses Esc, without waiting for an empty input box', async () => {
+  const allow = setupCodexPermission()
+  assert.equal(await allow.next({ offer: allow.id, index: 0 }), true)
+  assert.deepEqual(allow.keys, ['1'])
+  const stop = setupCodexPermission()
+  assert.equal(await stop.next({ offer: stop.id, index: 1 }), true)
+  assert.deepEqual(stop.keys, ['\u001b'])
+})
+
+test('Codex: a dangerous command is allowed only when confirmed', async () => {
+  const context = setupCodexPermission({ command: 'rm -rf build' })
+  assert.equal(await context.next({ offer: context.id, index: 0 }), 'confirm')
+  assert.deepEqual(context.keys, [])
+  assert.equal(await context.next({ offer: context.id, index: 0, confirmed: true }), true)
+  assert.deepEqual(context.keys, ['1'])
+})
+
+test('Codex: nothing is pressed once the menu has gone between the offer and the press', async () => {
+  let reads = 0
+  const context = setupCodexPermission({ screen: async () => (reads++ === 0 ? CODEX_MENU('touch a') : 'no menu') })
+  assert.equal(await context.next({ offer: context.id, index: 0 }), false)
+  assert.deepEqual(context.keys, [])
+})
+
 test('isPermissionMenu reads the menu with or without the pointer', () => {
   assert.equal(isPermissionMenu(MENU('ls'), 'ls'), true)
   assert.equal(isPermissionMenu(MENU('ls').replace('❯ 1. Yes', '  1. Yes'), 'ls'), true)

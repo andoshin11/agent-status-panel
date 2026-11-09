@@ -1,7 +1,7 @@
 // Sends an action an agent proposed, or the answer to its question, when the user presses a button.
 // The phone says only which button: what to send comes from what the agent wrote, read again now,
 // so a phone cannot send anything else and a button from an earlier turn does nothing.
-import { answerKeys, isPane, offersOf, readWorktrees, resolveOrcaCli, runOrca } from './orca-agents.mjs'
+import { answerKeys, isCodexPermissionMenu, isPane, listTerminals, offersOf, readPaneScreen, readScreen, readWorktrees, resolveOrcaCli, runOrca } from './orca-agents.mjs'
 
 const USED_MAX = 256
 const SUBMIT_WAIT_SECONDS = '8'
@@ -22,10 +22,6 @@ const PERMISSION_FOOTER = 'Esc to cancel'
 // On the review page the menu shows after the last question.
 const REVIEW_PAGE = 'Submit answers'
 
-async function listTerminals(cli) {
-  return (await runOrca(cli, ['terminal', 'list', '--json'])).terminals
-}
-
 async function sendPrompt(cli, handle, prompt) {
   const result = await runOrca(cli, ['terminal', 'send', '--terminal', handle, '--text', prompt, '--enter', '--wait-submit', SUBMIT_WAIT_SECONDS, '--json'], SEND_TIMEOUT_MS)
   if (!result.send?.accepted) throw new Error('the terminal did not accept the prompt')
@@ -35,10 +31,6 @@ async function sendPrompt(cli, handle, prompt) {
 async function stashDraft(cli, handle) {
   await runOrca(cli, ['terminal', 'send', '--terminal', handle, '--text', STASH_KEY, '--json'])
   await new Promise((resolve) => setTimeout(resolve, STASH_WAIT_MS))
-}
-
-async function readScreen(cli, handle) {
-  return (await runOrca(cli, ['terminal', 'read', '--terminal', handle, '--screen', '--limit', '60', '--json'])).terminal.tail.join('\n')
 }
 
 /** Without Enter: the menu takes a number as one key press, and Enter would go on to the next one. */
@@ -78,15 +70,17 @@ export function createNextSender({ cli = resolveOrcaCli(), read = readWorktrees,
 
   return async function next({ offer, index, answers, confirmed = false }) {
     if (used.has(offer)) return false
-    const found = (await offersOf(await read(cli), readQuestion, readSuggestions, readCall)).find((candidate) => candidate.id === offer)
+    const found = (await offersOf(await read(cli), readQuestion, readSuggestions, readCall, (paneKey) => readPaneScreen(cli, paneKey, terminals, screen))).find((candidate) => candidate.id === offer)
     const keys = answers ? answerKeys(found?.questions, answers) : null
     const suggestion = answers ? null : found?.suggestions[index]
     if (!keys && !suggestion) return false
     if (suggestion?.action === 'allow' && found.dangerous && !confirmed) return 'confirm'
     const terminal = (await terminals(cli)).find((candidate) => isPane(candidate, found.paneKey) && candidate.writable)
     if (!terminal) return false
-    if (suggestion?.action && !isPermissionMenu(await screen(cli, terminal.handle), found.menuHint)) return false
-    if (found.agent === 'codex' && suggestion && !suggestion.keys && !(await screen(cli, terminal.handle)).includes(CODEX_EMPTY_HINT)) return 'typing'
+    const onMenu = found.agent === 'codex' ? isCodexPermissionMenu : isPermissionMenu
+    if (suggestion?.action && !onMenu(await screen(cli, terminal.handle), found.menuHint)) return false
+    // A menu key goes to the menu and leaves a draft alone, so only a typed prompt could join one.
+    if (found.agent === 'codex' && suggestion && !suggestion.keys && !suggestion.action && !(await screen(cli, terminal.handle)).includes(CODEX_EMPTY_HINT)) return 'typing'
     // Checked again here, right before the send: a second press may have arrived during the reads.
     if (used.has(offer)) return false
     take(offer)
