@@ -13,7 +13,7 @@ const BODY_LIMIT = 1024
  * @param snapshot  returns what to serve, or null before the sessions were first read
  * @param register  takes `{ token, environment }` from the iOS app and resolves once it is kept;
  *   throws a TypeError for a body it refuses. Without it, there is nothing to register with.
- * @param next  takes `{ offer, index }` and resolves to whether that button was still on offer, or
+ * @param next  takes `{ offer, index }` or `{ offer, answers }` and resolves to whether that button was still on offer, or
  *   to 'typing' when it cannot be sent now
  * @param allowedLogin  the Tailscale login that may press the buttons. Without it there are none.
  * @returns the listening server
@@ -63,9 +63,10 @@ async function pressNext(request, response, next, allowedLogin) {
   if (text === null) return reply(response, 413, { error: 'too large' })
   let press
   try {
-    const { offer, index } = JSON.parse(text)
-    if (typeof offer !== 'string' || !Number.isInteger(index)) throw new TypeError('not a button')
-    press = { offer, index }
+    const { offer, index, answers } = JSON.parse(text)
+    const isAnswers = Array.isArray(answers) && answers.every((chosen) => Array.isArray(chosen) && chosen.every(Number.isInteger))
+    if (typeof offer !== 'string' || (!Number.isInteger(index) && !isAnswers)) throw new TypeError('not a button')
+    press = isAnswers ? { offer, answers } : { offer, index }
   } catch {
     return reply(response, 400, { error: 'bad button' })
   }

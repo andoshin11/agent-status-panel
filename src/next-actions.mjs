@@ -1,7 +1,7 @@
 // Sends an action an agent proposed, or the answer to its question, when the user presses a button.
 // The phone says only which button: what to send comes from what the agent wrote, read again now,
 // so a phone cannot send anything else and a button from an earlier turn does nothing.
-import { isPane, offersOf, readWorktrees, resolveOrcaCli, runOrca } from './orca-agents.mjs'
+import { answerKeys, isPane, offersOf, readWorktrees, resolveOrcaCli, runOrca } from './orca-agents.mjs'
 
 const USED_MAX = 256
 const SUBMIT_WAIT_SECONDS = '8'
@@ -11,6 +11,11 @@ const STASH_KEY = '\u0013'
 const STASH_WAIT_MS = 400
 // Codex shows this while its input box is empty. Text in the box does not show on a screen read.
 const CODEX_EMPTY_HINT = '? for shortcuts'
+const KEY_WAIT_MS = 250
+const REVIEW_WAIT_MS = 800
+const SUBMIT_KEY = '\r'
+// On the review page the menu shows after the last question.
+const REVIEW_PAGE = 'Submit answers'
 
 async function listTerminals(cli) {
   return (await runOrca(cli, ['terminal', 'list', '--json'])).terminals
@@ -42,7 +47,7 @@ async function sendKeys(cli, handle, keys) {
  *   prompt, false when that button is no longer on offer, or 'typing' when a draft in Codex's
  *   input box would be sent along with it. It throws when sending fails.
  */
-export function createNextSender({ cli = resolveOrcaCli(), read = readWorktrees, readQuestion = async () => null, readSuggestions, terminals = listTerminals, send = sendPrompt, pressKeys = sendKeys, stash = stashDraft, screen = readScreen, onSent = () => {}, log = () => {} } = {}) {
+export function createNextSender({ cli = resolveOrcaCli(), read = readWorktrees, readQuestion = async () => null, readSuggestions, terminals = listTerminals, send = sendPrompt, pressKeys = sendKeys, stash = stashDraft, screen = readScreen, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), onSent = () => {}, log = () => {} } = {}) {
   const used = new Set()
 
   function take(offer) {
@@ -50,28 +55,42 @@ export function createNextSender({ cli = resolveOrcaCli(), read = readWorktrees,
     if (used.size > USED_MAX) used.delete(used.values().next().value)
   }
 
-  return async function next({ offer, index }) {
+  /** Submits only from the review page, so that keys gone astray never answer on their own. */
+  async function answerForm(handle, keys) {
+    for (const key of keys) {
+      await pressKeys(cli, handle, key)
+      await wait(KEY_WAIT_MS)
+    }
+    await wait(REVIEW_WAIT_MS)
+    if (!(await screen(cli, handle)).includes(REVIEW_PAGE)) throw new Error('the menu did not reach its review page')
+    await pressKeys(cli, handle, SUBMIT_KEY)
+  }
+
+  return async function next({ offer, index, answers }) {
     if (used.has(offer)) return false
     const found = (await offersOf(await read(cli), readQuestion, readSuggestions)).find((candidate) => candidate.id === offer)
-    const suggestion = found?.suggestions[index]
-    if (!suggestion) return false
+    const keys = answers ? answerKeys(found?.questions, answers) : null
+    const suggestion = answers ? null : found?.suggestions[index]
+    if (!keys && !suggestion) return false
     const terminal = (await terminals(cli)).find((candidate) => isPane(candidate, found.paneKey) && candidate.writable)
     if (!terminal) return false
-    if (found.agent === 'codex' && !suggestion.keys && !(await screen(cli, terminal.handle)).includes(CODEX_EMPTY_HINT)) return 'typing'
+    if (found.agent === 'codex' && suggestion && !suggestion.keys && !(await screen(cli, terminal.handle)).includes(CODEX_EMPTY_HINT)) return 'typing'
     // Checked again here, right before the send: a second press may have arrived during the reads.
     if (used.has(offer)) return false
     take(offer)
     try {
-      if (suggestion.keys) await pressKeys(cli, terminal.handle, suggestion.keys)
+      if (keys) await answerForm(terminal.handle, keys)
+      else if (suggestion.keys) await pressKeys(cli, terminal.handle, suggestion.keys)
       else {
         if (found.agent === 'claude') await stash(cli, terminal.handle)
         await send(cli, terminal.handle, suggestion.prompt)
       }
     } catch (error) {
-      used.delete(offer)
+      // A form stopped halfway has options ticked, so pressing the same keys again would untick them.
+      if (!keys) used.delete(offer)
       throw error
     }
-    log(`sent ${suggestion.keys ? 'an answer' : 'a proposed action'} to a ${found.agent} session`)
+    log(`sent ${keys || suggestion.keys ? 'an answer' : 'a proposed action'} to a ${found.agent} session`)
     onSent()
     return true
   }
