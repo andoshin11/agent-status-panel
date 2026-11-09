@@ -13,6 +13,10 @@ const SUGGESTIONS_MAX = 3
 const LABEL_MAX = 30
 const PROMPT_MAX = 300
 // The last thing in the reply, as the agents are told to write it.
+const QUESTION_MAX = 300
+const OPTION_MAX = 60
+// One key each: the menu takes the number of an option as a single key press.
+const OPTIONS_MAX = 9
 const NEXT_BLOCK = /```next[ \t]*\r?\n([\s\S]*?)\r?\n?```\s*$/
 const CONTROL = /[\u0000-\u001f\u007f]/
 
@@ -66,8 +70,54 @@ export function parseSuggestions(message) {
 }
 
 /** Changes with every turn, so a button shown for an earlier reply matches nothing. */
-export function offerId(agent) {
-  return createHash('sha256').update(`${agent.paneKey}\n${agent.stateStartedAt}`).digest('hex').slice(0, 16)
+export function offerId(agent, extra = '') {
+  return createHash('sha256').update(`${agent.paneKey}\n${agent.stateStartedAt}\n${extra}`).digest('hex').slice(0, 16)
+}
+
+function soleAgent(worktree) {
+  if (worktree.isArchived) return null
+  const agents = mainAgents(worktree).filter((agent) => agent.hasLivePty !== false)
+  return agents.length === 1 ? agents[0] : null
+}
+
+function shorten(text, max) {
+  const chars = [...text.replace(/\s+/g, ' ').trim()]
+  return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : chars.join('')
+}
+
+/**
+ * The buttons for one question that has one answer. The options keep their order and none is left
+ * out, since the key to press is the position. Anything else is answered at the terminal.
+ */
+export function questionButtons(asked) {
+  if (asked?.questions?.length !== 1) return null
+  const [{ question, multiSelect, options }] = asked.questions
+  if (typeof question !== 'string' || !question.trim() || multiSelect) return null
+  if (!Array.isArray(options) || options.length === 0 || options.length > OPTIONS_MAX) return null
+  if (!options.every((option) => typeof option?.label === 'string' && option.label.trim())) return null
+  return {
+    question: shorten(question, QUESTION_MAX),
+    suggestions: options.map((option, index) => ({ label: shorten(option.label, OPTION_MAX), keys: String(index + 1) }))
+  }
+}
+
+async function questionOffer(worktree, readQuestion) {
+  const agent = soleAgent(worktree)
+  if (agent?.agentType !== 'claude' || agent.state !== 'waiting' || agent.toolName !== 'AskUserQuestion') return null
+  const asked = await readQuestion(worktree.path).catch(() => null)
+  const buttons = questionButtons(asked)
+  if (!buttons) return null
+  return { id: offerId(agent, asked.toolUseId), path: worktree.path, agent: agent.agentType, paneKey: agent.paneKey, ...buttons }
+}
+
+/** What every agent offers now: what it proposed after finishing, and what it is asking. */
+export async function offersOf(worktrees, readQuestion) {
+  const offers = offersFrom(worktrees)
+  for (const worktree of worktrees) {
+    const offer = await questionOffer(worktree, readQuestion)
+    if (offer) offers.push(offer)
+  }
+  return offers
 }
 
 /**
@@ -77,12 +127,11 @@ export function offerId(agent) {
 export function offersFrom(worktrees) {
   const offers = []
   for (const worktree of worktrees) {
-    if (worktree.isArchived) continue
-    const agents = mainAgents(worktree).filter((agent) => agent.hasLivePty !== false)
-    if (agents.length !== 1 || agents[0].state !== 'done') continue
-    const suggestions = parseSuggestions(agents[0].lastAssistantMessage)
+    const agent = soleAgent(worktree)
+    if (agent?.state !== 'done') continue
+    const suggestions = parseSuggestions(agent.lastAssistantMessage)
     if (suggestions.length === 0) continue
-    offers.push({ id: offerId(agents[0]), path: worktree.path, agent: agents[0].agentType, paneKey: agents[0].paneKey, suggestions })
+    offers.push({ id: offerId(agent), path: worktree.path, agent: agent.agentType, paneKey: agent.paneKey, suggestions })
   }
   return offers
 }
@@ -113,7 +162,7 @@ export async function readWorktrees(cli) {
  * While Orca cannot answer, the last answer stands: nothing is known to have changed, and clearing
  * it would send a notification again when Orca comes back.
  */
-export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees, log = () => {} } = {}) {
+export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees, readQuestion = async () => null, log = () => {} } = {}) {
   let attention = []
   let offers = []
   let failing = false
@@ -122,7 +171,7 @@ export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees
       try {
         const worktrees = await read(cli)
         attention = attentionFrom(worktrees)
-        offers = offersFrom(worktrees)
+        offers = await offersOf(worktrees, readQuestion)
         failing = false
       } catch (error) {
         if (!failing) log(`keeping the last agent states: ${error.message}`)

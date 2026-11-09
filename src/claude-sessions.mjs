@@ -15,6 +15,8 @@ const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 const TEAM_LIST_ID = /^session-([0-9a-f]{8})$/
 // The working directory sits near the top; big transcripts are not read whole to find it.
 const TRANSCRIPT_HEAD_BYTES = 512 * 1024
+// A question being asked is at the very end, so a long transcript is not read whole to find it.
+const TRANSCRIPT_TAIL_BYTES = 1024 * 1024
 
 export function claudePaths(home) {
   return {
@@ -48,21 +50,23 @@ function isRunning(pid) {
  * ~/.claude/sessions/<pid>.json, removed when it exits; the pid is checked in case it crashed.
  */
 export async function readRunningSessionIds(sessionsRoot) {
+  return new Set((await readRunningSessions(sessionsRoot)).map((entry) => entry.sessionId))
+}
+
+async function readRunningSessions(sessionsRoot) {
   let names
   try {
     names = await readdir(sessionsRoot)
   } catch {
-    return new Set()
+    return []
   }
-  const ids = new Set()
+  const running = []
   for (const name of names) {
     if (!/^\d+\.json$/.test(name)) continue
     const entry = await readJson(join(sessionsRoot, name))
-    if (entry && isSessionId(entry.sessionId) && Number.isInteger(entry.pid) && isRunning(entry.pid)) {
-      ids.add(entry.sessionId)
-    }
+    if (entry && isSessionId(entry.sessionId) && Number.isInteger(entry.pid) && isRunning(entry.pid)) running.push(entry)
   }
-  return ids
+  return running
 }
 
 /** Whether the session that owns a task list (by its id, or a team's id prefix) is running. */
@@ -282,4 +286,59 @@ export async function readTranscriptCwd(path) {
     if (typeof entry.cwd === 'string') return entry.cwd
   }
   return null
+}
+
+async function readTail(path) {
+  const file = await open(path, 'r')
+  try {
+    const { size } = await file.stat()
+    const length = Math.min(size, TRANSCRIPT_TAIL_BYTES)
+    const buffer = Buffer.alloc(length)
+    const { bytesRead } = await file.read(buffer, 0, length, size - length)
+    return buffer.subarray(0, bytesRead).toString('utf8')
+  } finally {
+    await file.close()
+  }
+}
+
+/**
+ * The AskUserQuestion call that has no result yet, from the lines of a transcript. Only the last
+ * one counts: an earlier call without a result was abandoned.
+ */
+export function pendingQuestion(text) {
+  const answered = new Set()
+  for (const line of text.split('\n').toReversed()) {
+    if (!line.includes('tool_')) continue
+    let entry
+    try {
+      entry = JSON.parse(line)
+    } catch {
+      // The tail can begin in the middle of a line.
+      continue
+    }
+    const content = Array.isArray(entry.message?.content) ? entry.message.content : []
+    for (const part of content.toReversed()) {
+      if (part?.type === 'tool_result') answered.add(part.tool_use_id)
+      if (part?.type === 'tool_use' && part.name === 'AskUserQuestion') {
+        return answered.has(part.id) ? null : { toolUseId: part.id, questions: part.input?.questions ?? [] }
+      }
+    }
+  }
+  return null
+}
+
+/** Finds the question the running Claude session in a workspace is asking now. */
+export function createQuestionReader(home) {
+  const { projectsRoot, sessionsRoot } = claudePaths(home)
+  return async function readQuestion(path) {
+    const inside = (await readRunningSessions(sessionsRoot)).filter((entry) => entry.cwd === path || entry.cwd?.startsWith(`${path}/`))
+    const pending = []
+    for (const { sessionId } of inside) {
+      const transcript = await findTranscript(projectsRoot, sessionId)
+      const asked = transcript ? pendingQuestion(await readTail(transcript).catch(() => '')) : null
+      if (asked) pending.push(asked)
+    }
+    // Another Claude in the same folder, started outside Orca, could be the one asking.
+    return pending.length === 1 ? pending[0] : null
+  }
 }
