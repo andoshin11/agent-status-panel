@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createNextSender } from '../src/next-actions.mjs'
+import { createNextSender, isPermissionMenu } from '../src/next-actions.mjs'
 import { offerId } from '../src/orca-agents.mjs'
 
 const reply = '```next\n[{"label":"A","prompt":"do a"},{"label":"B","prompt":"do b"}]\n```'
@@ -190,4 +190,53 @@ test('answers that do not fit the form press nothing', async () => {
   assert.equal(await context.next({ offer: FORM, answers: [[0]] }), false)
   assert.equal(await context.next({ offer: FORM, index: 0 }), false)
   assert.deepEqual(context.keys, [])
+})
+
+const permission = { agentType: 'claude', state: 'waiting', toolName: 'Bash', paneKey: 'tab:leaf', hasLivePty: true, stateStartedAt: 7 }
+const MENU = (command) => `Bash command\n ${command}\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and always allow\n   3. Yes, and switch to auto mode\n   4. No\n Esc to cancel · Tab to amend`
+const PERMISSION = offerId(permission, 'toolu_p')
+
+function setupPermission({ command = 'touch a', screen } = {}) {
+  const context = { keys: [] }
+  context.next = createNextSender({
+    cli: 'orca',
+    read: async () => [{ path: '/a', agents: [permission] }],
+    readCall: async () => ({ toolUseId: 'toolu_p', name: 'Bash', input: { command } }),
+    terminals: async () => [{ handle: 'h1', tabId: 'tab', leafId: 'leaf', writable: true }],
+    pressKeys: async (_cli, _handle, key) => context.keys.push(key),
+    screen: screen ?? (async () => MENU(command))
+  })
+  return context
+}
+
+test('allow presses 1 and deny presses Esc, never another number', async () => {
+  const allow = setupPermission()
+  assert.equal(await allow.next({ offer: PERMISSION, index: 0 }), true)
+  assert.deepEqual(allow.keys, ['1'])
+  const deny = setupPermission()
+  assert.equal(await deny.next({ offer: PERMISSION, index: 1 }), true)
+  assert.deepEqual(deny.keys, ['\u001b'])
+})
+
+test('a dangerous command is allowed only when confirmed, and denied without', async () => {
+  const context = setupPermission({ command: 'rm -rf build' })
+  assert.equal(await context.next({ offer: PERMISSION, index: 0 }), 'confirm')
+  assert.deepEqual(context.keys, [])
+  assert.equal(await context.next({ offer: PERMISSION, index: 0, confirmed: true }), true)
+  assert.deepEqual(context.keys, ['1'])
+  const deny = setupPermission({ command: 'rm -rf build' })
+  assert.equal(await deny.next({ offer: PERMISSION, index: 1 }), true)
+})
+
+test('nothing is pressed unless the menu for this command is on screen', async () => {
+  for (const shown of ['no menu', MENU('touch other'), MENU('touch a').replace('1. Yes', '1. Yes, and more'), MENU('touch a').replace('Esc to cancel', '')]) {
+    const context = setupPermission({ screen: async () => shown })
+    assert.equal(await context.next({ offer: PERMISSION, index: 0 }), false, shown)
+    assert.deepEqual(context.keys, [])
+  }
+})
+
+test('isPermissionMenu reads the menu with or without the pointer', () => {
+  assert.equal(isPermissionMenu(MENU('ls'), 'ls'), true)
+  assert.equal(isPermissionMenu(MENU('ls').replace('❯ 1. Yes', '  1. Yes'), 'ls'), true)
 })

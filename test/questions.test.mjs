@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { createQuestionReader, pendingQuestion } from '../src/claude-sessions.mjs'
+import { createQuestionReader, pendingCall, pendingQuestion } from '../src/claude-sessions.mjs'
 import { makeHome, SESSION_A, SESSION_B } from './helpers.mjs'
 
 const ask = (id) => JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'AskUserQuestion', input: { questions: [{ question: 'Q' }] } }] } })
@@ -50,4 +50,15 @@ test('a second session that is not asking is no obstacle', async () => {
   await session(home, SESSION_A, '/w/app', [ask('a')])
   await session(home, SESSION_B, '/w/app', [ask('b'), result('b')])
   assert.equal((await createQuestionReader(home)('/w/app')).toolUseId, 'a')
+})
+
+const call = (id, name = 'Bash') => JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input: { command: 'ls' } }] } })
+
+test('finds the tool call without a result', () => {
+  assert.deepEqual(pendingCall([call('a'), result('a'), call('b')].join('\n')), { toolUseId: 'b', name: 'Bash', input: { command: 'ls' } })
+})
+
+test('a call with a result is not pending, as after a denial', () => {
+  assert.equal(pendingCall([call('a'), result('a')].join('\n')), null)
+  assert.equal(pendingCall(''), null)
 })

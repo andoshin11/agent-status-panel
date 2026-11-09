@@ -4,6 +4,7 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
+import { basename } from 'node:path'
 
 const BUNDLED_CLI = '/Applications/Orca.app/Contents/Resources/bin/orca'
 const TRACKED_AGENTS = new Set(['claude', 'codex'])
@@ -20,6 +21,21 @@ const DETAIL_MAX = 200
 const OPTIONS_MAX = 9
 const QUESTIONS_MAX = 4
 const TAB_KEY = '\t'
+// Commands that ask for a second look before the phone may allow them. A heuristic: it can miss one.
+const DANGEROUS_COMMANDS = [
+  /(^|[\s;&|(])rm(\s|$)/,
+  /(^|[\s;&|(])sudo(\s|$)/,
+  /\bgit\s+push\b[^;&|]*\s(--force(-with-lease)?|-f)(\s|$)/,
+  /\bgit\s+reset\s+--hard\b/,
+  /\bgit\s+clean\b/,
+  /\bdd\s+if=/,
+  /\bmkfs\b/,
+  /\bchmod\s+-R\b/,
+  /\bkubectl\s+delete\b/,
+  /\bterraform\s+(destroy|apply)\b/,
+  /\bdrop\s+(table|database)\b/i,
+  /\btruncate\s+table\b/i
+]
 const NEXT_BLOCK = /```next[ \t]*\r?\n([\s\S]*?)\r?\n?```\s*$/
 const CONTROL = /[\u0000-\u001f\u007f]/
 
@@ -154,6 +170,43 @@ export function answerKeys(questions, answers) {
   return keys
 }
 
+export function isDangerous(call) {
+  return call.name === 'Bash' && typeof call.input?.command === 'string' && DANGEROUS_COMMANDS.some((pattern) => pattern.test(call.input.command))
+}
+
+/** What a tool call would do, in a line, and a piece of it that its permission menu shows. */
+function describeCall({ name, input }) {
+  if (typeof input.command === 'string') {
+    return { summary: shorten(input.command, QUESTION_MAX), menuHint: input.command.trim().split('\n')[0].slice(0, 24) }
+  }
+  if (typeof input.file_path === 'string') {
+    return { summary: shorten(input.file_path, QUESTION_MAX), menuHint: basename(input.file_path) }
+  }
+  return { summary: shorten(JSON.stringify(input), QUESTION_MAX), menuHint: '' }
+}
+
+async function permissionOffer(worktree, readCall) {
+  const agent = soleAgent(worktree)
+  if (agent?.agentType !== 'claude' || !['waiting', 'permission'].includes(agent.state) || !agent.toolName || agent.toolName === 'AskUserQuestion') return null
+  // Orca can keep saying "waiting" after the user answered at the terminal. The transcript cannot.
+  const call = await readCall(worktree.path).catch(() => null)
+  if (call?.name !== agent.toolName) return null
+  const { summary, menuHint } = describeCall(call)
+  return {
+    id: offerId(agent, call.toolUseId),
+    path: worktree.path,
+    agent: agent.agentType,
+    paneKey: agent.paneKey,
+    question: `${call.name} を許可しますか？ ${summary}`,
+    menuHint,
+    dangerous: isDangerous(call),
+    suggestions: [
+      { label: '許可', action: 'allow', detail: '今回だけ実行します' },
+      { label: '拒否', action: 'deny', detail: '実行しません' }
+    ]
+  }
+}
+
 async function questionOffer(worktree, readQuestion) {
   const agent = soleAgent(worktree)
   if (agent?.agentType !== 'claude' || agent.state !== 'waiting' || agent.toolName !== 'AskUserQuestion') return null
@@ -171,12 +224,12 @@ async function questionOffer(worktree, readQuestion) {
 }
 
 /** What every agent offers now: what it proposed after finishing, and what it is asking. */
-export async function offersOf(worktrees, readQuestion, readSuggestions = async () => new Map()) {
+export async function offersOf(worktrees, readQuestion, readSuggestions = async () => new Map(), readCall = async () => null) {
   const finished = worktrees.map(soleAgent).filter((agent) => agent?.agentType === 'claude' && agent.state === 'done')
   const shown = finished.length > 0 ? await readSuggestions(finished.map((agent) => agent.paneKey)).catch(() => new Map()) : new Map()
   const offers = offersFrom(worktrees, shown)
   for (const worktree of worktrees) {
-    const offer = await questionOffer(worktree, readQuestion)
+    const offer = (await questionOffer(worktree, readQuestion)) ?? (await permissionOffer(worktree, readCall))
     if (offer) offers.push(offer)
   }
   return offers
@@ -228,7 +281,7 @@ export async function readWorktrees(cli) {
  * While Orca cannot answer, the last answer stands: nothing is known to have changed, and clearing
  * it would send a notification again when Orca comes back.
  */
-export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees, readQuestion = async () => null, readSuggestions, log = () => {} } = {}) {
+export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees, readQuestion = async () => null, readSuggestions, readCall, log = () => {} } = {}) {
   let attention = []
   let offers = []
   let failing = false
@@ -237,7 +290,7 @@ export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees
       try {
         const worktrees = await read(cli)
         attention = attentionFrom(worktrees)
-        offers = await offersOf(worktrees, readQuestion, readSuggestions)
+        offers = await offersOf(worktrees, readQuestion, readSuggestions, readCall)
         failing = false
       } catch (error) {
         if (!failing) log(`keeping the last agent states: ${error.message}`)

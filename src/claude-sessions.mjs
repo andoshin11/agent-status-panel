@@ -327,15 +327,44 @@ export function pendingQuestion(text) {
   return null
 }
 
+/** The last tool call in a transcript, when it has no result yet: the one waiting for permission. */
+export function pendingCall(text) {
+  const answered = new Set()
+  for (const line of text.split('\n').toReversed()) {
+    if (!line.includes('tool_')) continue
+    let entry
+    try {
+      entry = JSON.parse(line)
+    } catch {
+      continue
+    }
+    const content = Array.isArray(entry.message?.content) ? entry.message.content : []
+    for (const part of content.toReversed()) {
+      if (part?.type === 'tool_result') answered.add(part.tool_use_id)
+      if (part?.type === 'tool_use') return answered.has(part.id) ? null : { toolUseId: part.id, name: part.name, input: part.input ?? {} }
+    }
+  }
+  return null
+}
+
 /** Finds the question the running Claude session in a workspace is asking now. */
 export function createQuestionReader(home) {
+  return createPendingReader(home, pendingQuestion)
+}
+
+/** Finds the tool call the running Claude session in a workspace has not finished. */
+export function createPendingCallReader(home) {
+  return createPendingReader(home, pendingCall)
+}
+
+function createPendingReader(home, pick) {
   const { projectsRoot, sessionsRoot } = claudePaths(home)
-  return async function readQuestion(path) {
+  return async function readPending(path) {
     const inside = (await readRunningSessions(sessionsRoot)).filter((entry) => entry.cwd === path || entry.cwd?.startsWith(`${path}/`))
     const pending = []
     for (const { sessionId } of inside) {
       const transcript = await findTranscript(projectsRoot, sessionId)
-      const asked = transcript ? pendingQuestion(await readTail(transcript).catch(() => '')) : null
+      const asked = transcript ? pick(await readTail(transcript).catch(() => '')) : null
       if (asked) pending.push(asked)
     }
     // Another Claude in the same folder, started outside Orca, could be the one asking.

@@ -55,7 +55,8 @@ function offerFields(offer) {
     suggestions: JSON.stringify(offer.suggestions.map(({ label }) => label)),
     details: JSON.stringify(offer.suggestions.map(({ detail, prompt }) => detail ?? prompt ?? '')),
     ...(offer.question ? { question: offer.question } : {}),
-    ...(offer.questions ? { questions: JSON.stringify(offer.questions) } : {})
+    ...(offer.questions ? { questions: JSON.stringify(offer.questions) } : {}),
+    ...(offer.dangerous ? { dangerous: '1' } : {})
   }
 }
 
