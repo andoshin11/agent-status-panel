@@ -46,7 +46,8 @@ export function withOffers(sessions, offers, now) {
 
 /** The labels only: the prompts stay on this machine until a button is pressed. */
 function offerFields(offer) {
-  return offer ? { offer: offer.id, suggestions: JSON.stringify(offer.suggestions.map(({ label }) => label)) } : {}
+  if (!offer) return {}
+  return { offer: offer.id, suggestions: JSON.stringify(offer.suggestions.map(({ label }) => label)), ...(offer.question ? { question: offer.question } : {}) }
 }
 
 export async function loadState(path) {

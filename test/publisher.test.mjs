@@ -246,3 +246,14 @@ test('with sendText off there are no offers', async () => {
   await context.publisher.publish()
   assert.equal(context.publisher.snapshot().sessions[0].offer, undefined)
 })
+
+test('a question goes on the board with its text, and never into a push', async () => {
+  const context = setupOffers()
+  context.offers = [{ ...OFFER, question: 'Which?', suggestions: [{ label: 'Red', keys: '1' }] }]
+  context.sessions = [session([task(1, 'One', 'in_progress')])]
+  await context.publisher.publish()
+  const [card] = context.publisher.snapshot().sessions
+  assert.equal(card.question, 'Which?')
+  assert.equal(card.suggestions, '["Red"]')
+  assert.equal(context.delivered[0].question, undefined)
+})

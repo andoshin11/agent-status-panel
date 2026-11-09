@@ -57,6 +57,12 @@ test('without a writable terminal for that pane nothing is sent', async () => {
   }
 })
 
+test('finds the terminal of a workspace that is not on screen', async () => {
+  const context = setup({ terminals: [{ handle: 'other', tabId: 'pty:x', leafId: 'pty:x', recordedPaneKey: 'tab:else', writable: true }, { handle: 'h2', tabId: 'pty:y', leafId: 'pty:y', recordedPaneKey: 'tab:leaf', writable: true }] })
+  assert.equal(await context.next({ offer: OFFER, index: 0 }), true)
+  assert.deepEqual(context.sent, [{ handle: 'h2', prompt: 'do a' }])
+})
+
 test('a failed send can be tried again', async () => {
   let fail = true
   const sent = []
@@ -71,4 +77,48 @@ test('a failed send can be tried again', async () => {
   fail = false
   assert.equal(await context.next({ offer: OFFER, index: 0 }), true)
   assert.deepEqual(sent, ['do a'])
+})
+
+const question = { toolUseId: 'toolu_1', questions: [{ question: 'Which?', multiSelect: false, options: [{ label: 'Red' }, { label: 'Blue' }] }] }
+const asking = { agentType: 'claude', state: 'waiting', toolName: 'AskUserQuestion', paneKey: 'tab:leaf', stateStartedAt: 7 }
+const ASKED = offerId(asking, 'toolu_1')
+
+function setupQuestion({ read = async () => question } = {}) {
+  const context = { keys: [], prompts: [] }
+  context.next = createNextSender({
+    cli: 'orca',
+    read: async () => context.worktrees ?? [{ path: '/a', agents: [asking] }],
+    readQuestion: read,
+    terminals: async () => [{ handle: 'h1', tabId: 'tab', leafId: 'leaf', writable: true }],
+    send: async (_cli, _handle, prompt) => context.prompts.push(prompt),
+    pressKeys: async (_cli, handle, keys) => context.keys.push({ handle, keys })
+  })
+  return context
+}
+
+test('an answer presses the number of the option and sends no prompt', async () => {
+  const context = setupQuestion()
+  assert.equal(await context.next({ offer: ASKED, index: 1 }), true)
+  assert.deepEqual(context.keys, [{ handle: 'h1', keys: '2' }])
+  assert.deepEqual(context.prompts, [])
+})
+
+test('an answer works once', async () => {
+  const context = setupQuestion()
+  assert.equal(await context.next({ offer: ASKED, index: 0 }), true)
+  assert.equal(await context.next({ offer: ASKED, index: 1 }), false)
+  assert.equal(context.keys.length, 1)
+})
+
+test('a button for another question presses nothing, even at the same moment of the agent', async () => {
+  const context = setupQuestion({ read: async () => ({ ...question, toolUseId: 'toolu_2' }) })
+  assert.equal(await context.next({ offer: ASKED, index: 0 }), false)
+  assert.deepEqual(context.keys, [])
+})
+
+test('a button for a question already answered presses nothing', async () => {
+  const context = setupQuestion()
+  context.worktrees = [{ path: '/a', agents: [{ ...asking, state: 'working' }] }]
+  assert.equal(await context.next({ offer: ASKED, index: 0 }), false)
+  assert.deepEqual(context.keys, [])
 })

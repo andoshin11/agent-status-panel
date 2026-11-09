@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { attentionFrom, createAgentReader, offerId, offersFrom, parseSuggestions, resolveOrcaCli } from '../src/orca-agents.mjs'
+import { attentionFrom, createAgentReader, offerId, offersFrom, offersOf, parseSuggestions, questionButtons, resolveOrcaCli } from '../src/orca-agents.mjs'
 
 const agent = (state, extra = {}) => ({ agentType: 'claude', state, prompt: 'secret', ...extra })
 
@@ -102,4 +102,52 @@ test('one reading gives both the attention and the offers, and a failure keeps t
   fail = true
   await readAttention()
   assert.equal(readOffers().length, 1)
+})
+
+const option = (label) => ({ label, description: 'ignored' })
+const asked = (extra = {}, options = [option('Red'), option('Blue')]) => ({ toolUseId: 'toolu_1', questions: [{ question: ' Which  one? ', header: 'h', multiSelect: false, options, ...extra }] })
+
+test('questionButtons numbers every option in its place', () => {
+  assert.deepEqual(questionButtons(asked()), {
+    question: 'Which one?',
+    suggestions: [{ label: 'Red', keys: '1' }, { label: 'Blue', keys: '2' }]
+  })
+})
+
+test('questionButtons shortens long text without dropping an option', () => {
+  const buttons = questionButtons(asked({}, [option('あ'.repeat(100)), option('B')]))
+  assert.equal([...buttons.suggestions[0].label].length, 60)
+  assert.equal(buttons.suggestions[1].keys, '2')
+})
+
+test('questionButtons leaves to the terminal what one key cannot answer', () => {
+  assert.equal(questionButtons(null), null)
+  assert.equal(questionButtons({ questions: [] }), null)
+  assert.equal(questionButtons({ questions: [asked().questions[0], asked().questions[0]] }), null)
+  assert.equal(questionButtons(asked({ multiSelect: true })), null)
+  assert.equal(questionButtons(asked({ question: '' })), null)
+  assert.equal(questionButtons(asked({}, [])), null)
+  assert.equal(questionButtons(asked({}, Array(10).fill(option('x')))), null)
+  assert.equal(questionButtons(asked({}, [option('x'), { label: '' }])), null)
+})
+
+const waiting = (extra = {}) => agent('waiting', { toolName: 'AskUserQuestion', paneKey: 'tab:leaf', stateStartedAt: 7, ...extra })
+
+test('offersOf turns the question of the only agent into buttons', async () => {
+  const offers = await offersOf([{ path: '/a', agents: [waiting()] }], async (path) => (assert.equal(path, '/a'), asked()))
+  assert.equal(offers.length, 1)
+  assert.equal(offers[0].id, offerId(waiting(), 'toolu_1'))
+  assert.equal(offers[0].question, 'Which one?')
+})
+
+test('offersOf reads no question where a button could not answer it', async () => {
+  const none = async (agents) => assert.deepEqual(await offersOf([{ path: '/a', agents }], async () => asked()), [])
+  await none([waiting({ toolName: 'Bash' })])
+  await none([waiting({ state: 'permission' })])
+  await none([waiting({ agentType: 'codex' })])
+  await none([waiting(), waiting({ paneKey: 'tab:other' })])
+})
+
+test('a transcript that cannot be read costs only the buttons', async () => {
+  assert.deepEqual(await offersOf([{ path: '/a', agents: [waiting()] }], async () => { throw new Error('gone') }), [])
 })
