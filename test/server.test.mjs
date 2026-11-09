@@ -93,6 +93,12 @@ test('a button press reaches the agent and says whether it was still on offer', 
   assert.equal((await press(JSON.stringify({ offer: 'old', index: 0 }))).status, 409)
 })
 
+test('a press says when a draft is in the way', async (t) => {
+  const { server, press } = await serveNext(async () => 'typing')
+  t.after(() => server.close())
+  assert.equal((await press(JSON.stringify({ offer: 'a', index: 0 }))).status, 423)
+})
+
 test('only the allowed login can press a button', async (t) => {
   let calls = 0
   const { server, press } = await serveNext(async () => ++calls > 0)
