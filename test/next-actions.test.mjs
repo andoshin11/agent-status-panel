@@ -7,13 +7,15 @@ const reply = '```next\n[{"label":"A","prompt":"do a"},{"label":"B","prompt":"do
 const agent = { agentType: 'claude', state: 'done', paneKey: 'tab:leaf', hasLivePty: true, stateStartedAt: 5, lastAssistantMessage: reply }
 const OFFER = offerId(agent)
 
-function setup({ worktrees = [{ path: '/a', agents: [agent] }], terminals = [{ handle: 'h1', tabId: 'tab', leafId: 'leaf', writable: true }], send } = {}) {
-  const context = { sent: [], notified: 0 }
+function setup({ worktrees = [{ path: '/a', agents: [agent] }], terminals = [{ handle: 'h1', tabId: 'tab', leafId: 'leaf', writable: true }], send, screen = async () => '? for shortcuts' } = {}) {
+  const context = { sent: [], notified: 0, order: [] }
   context.next = createNextSender({
     cli: 'orca',
     read: async () => context.worktrees ?? worktrees,
     terminals: async () => terminals,
-    send: send ?? (async (_cli, handle, prompt) => context.sent.push({ handle, prompt })),
+    send: send ?? (async (_cli, handle, prompt) => (context.order.push('send'), context.sent.push({ handle, prompt }))),
+    stash: async () => context.order.push('stash'),
+    screen,
     onSent: () => (context.notified += 1)
   })
   return context
@@ -63,6 +65,30 @@ test('finds the terminal of a workspace that is not on screen', async () => {
   assert.deepEqual(context.sent, [{ handle: 'h2', prompt: 'do a' }])
 })
 
+test('a draft in Claude is set aside before the prompt', async () => {
+  const context = setup()
+  await context.next({ offer: OFFER, index: 0 })
+  assert.deepEqual(context.order, ['stash', 'send'])
+})
+
+const codex = { ...agent, agentType: 'codex' }
+const CODEX_OFFER = offerId(codex)
+
+test('Codex with an empty box gets the prompt, and no stash it does not have', async () => {
+  const context = setup({ worktrees: [{ path: '/a', agents: [codex] }] })
+  assert.equal(await context.next({ offer: CODEX_OFFER, index: 0 }), true)
+  assert.deepEqual(context.order, ['send'])
+})
+
+test('a draft in Codex stops the prompt, and the button still works afterwards', async () => {
+  let shown = 'a draft hides the hint'
+  const context = setup({ worktrees: [{ path: '/a', agents: [codex] }], screen: async () => shown })
+  assert.equal(await context.next({ offer: CODEX_OFFER, index: 0 }), 'typing')
+  assert.deepEqual(context.sent, [])
+  shown = '? for shortcuts'
+  assert.equal(await context.next({ offer: CODEX_OFFER, index: 0 }), true)
+})
+
 test('a failed send can be tried again', async () => {
   let fail = true
   const sent = []
@@ -91,6 +117,7 @@ function setupQuestion({ read = async () => question } = {}) {
     readQuestion: read,
     terminals: async () => [{ handle: 'h1', tabId: 'tab', leafId: 'leaf', writable: true }],
     send: async (_cli, _handle, prompt) => context.prompts.push(prompt),
+    stash: async () => assert.fail('a menu has no draft to set aside'),
     pressKeys: async (_cli, handle, keys) => context.keys.push({ handle, keys })
   })
   return context

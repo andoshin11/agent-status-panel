@@ -13,7 +13,8 @@ const BODY_LIMIT = 1024
  * @param snapshot  returns what to serve, or null before the sessions were first read
  * @param register  takes `{ token, environment }` from the iOS app and resolves once it is kept;
  *   throws a TypeError for a body it refuses. Without it, there is nothing to register with.
- * @param next  takes `{ offer, index }` and resolves to whether that button was still on offer
+ * @param next  takes `{ offer, index }` and resolves to whether that button was still on offer, or
+ *   to 'typing' when it cannot be sent now
  * @param allowedLogin  the Tailscale login that may press the buttons. Without it there are none.
  * @returns the listening server
  */
@@ -69,7 +70,9 @@ async function pressNext(request, response, next, allowedLogin) {
     return reply(response, 400, { error: 'bad button' })
   }
   try {
-    if (await next(press)) return reply(response, 204)
+    const result = await next(press)
+    if (result === 'typing') return reply(response, 423, { error: 'the input box has a draft' })
+    if (result) return reply(response, 204)
     reply(response, 409, { error: 'no longer on offer' })
   } catch {
     reply(response, 502, { error: 'not sent' })
