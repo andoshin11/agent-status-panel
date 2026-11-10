@@ -331,3 +331,34 @@ test('a link from a reply makes a card, and a pull request linked to a quiet wor
   await quiet.publisher.publish()
   assert.equal(quiet.publisher.snapshot().sessions.length, 0)
 })
+
+test('a notification carries the id of the choices, and a new proposal is notified until it goes', async () => {
+  const state = { attention: [{ path: '/w/app', agent: 'claude', reason: 'permission' }], offers: [{ id: 'o-permission', kind: 'permission', path: '/w/app', suggestions: [] }], time: NOW }
+  const delivered = []
+  const publisher = createPublisher({
+    readSessions: async () => [],
+    readAttention: async () => state.attention,
+    readOffers: () => state.offers,
+    send: async (message) => delivered.push(message),
+    statePath: null,
+    sent: new Map(),
+    staleMs: STALE_MS,
+    sendText: true,
+    now: () => state.time
+  })
+  await publisher.publish()
+  assert.equal(delivered.find((m) => m.state === 'attention').offer, 'o-permission')
+  const proposalId = `proposal-${sessionKey('/w/b')}`
+  state.attention = []
+  state.offers = [{ id: 'o-new', kind: 'proposal', since: NOW - 1000, path: '/w/b', suggestions: [] }, { id: 'o-old', kind: 'proposal', since: NOW - 3_600_000, path: '/w/c', suggestions: [] }]
+  delivered.length = 0
+  await publisher.publish()
+  assert.deepEqual(delivered.filter((m) => m.state === 'proposal').map((m) => [m.id, m.offer, m.workspace]), [[proposalId, 'o-new', 'b']], 'only the one that just finished')
+  state.time = NOW + 3_600_000
+  delivered.length = 0
+  await publisher.publish()
+  assert.deepEqual(delivered.filter((m) => m.id.startsWith('proposal-')), [], 'stays while it is on offer')
+  state.offers = []
+  await publisher.publish()
+  assert.deepEqual(delivered.filter((m) => m.id.startsWith('proposal-')).map((m) => m.state), ['ended'])
+})

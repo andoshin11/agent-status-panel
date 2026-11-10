@@ -45,7 +45,7 @@ async function makeSender() {
   const config = await loadConfig(configPath(home))
   const serviceAccount = await loadServiceAccount(config.serviceAccountFile)
   const fcm = createFcmSender({ serviceAccount, tokens: config.deviceTokens, log })
-  if (!config.apns) return { config, send: fcm, apns: null, register: null, close: () => {} }
+  if (!config.apns) return { config, send: (data) => (data.id.startsWith('proposal-') ? undefined : fcm(data)), apns: null, register: null, close: () => {} }
   const devices = await createDeviceRegistry(apnsDevicesPath(home))
   const apns = createApnsSender({ ...config.apns, key: await loadApnsKey(config.apns.keyFile), devices, log })
   async function register({ token, environment }) {
@@ -54,7 +54,8 @@ async function makeSender() {
   }
   return {
     config,
-    send: (data) => Promise.all([fcm(data), apns(data)]),
+    // Proposals are notified on the iPhone only: the Android app has no buttons for them.
+    send: (data) => Promise.all([data.id.startsWith('proposal-') ? null : fcm(data), apns(data)]),
     apns,
     register,
     close: apns.close

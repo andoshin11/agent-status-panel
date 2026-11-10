@@ -2,7 +2,10 @@
 // was sent is saved, so a restart repeats nothing and still ends what went away while it was down.
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { buildAttention, buildEnded, buildProgress, fingerprint, SCHEMA_VERSION } from './payload.mjs'
+import { buildAttention, buildEnded, buildProgress, buildProposal, fingerprint, SCHEMA_VERSION } from './payload.mjs'
+
+// A proposal found later than this after its turn ended is not notified.
+const PROPOSAL_FRESH_MS = 10 * 60_000
 
 function isInside(cwd, path) {
   return cwd === path || (cwd ?? '').startsWith(`${path}/`)
@@ -118,7 +121,19 @@ export function createPublisher({ readSessions, readAttention = async () => [], 
     return list
   }
 
-  function planFrom(progress, attention) {
+  /**
+   * The proposals worth a notification: an agent that finished a turn just now. One found when the
+   * daemon starts, after waiting for hours, is not news; one already notified stays until it goes.
+   */
+  function proposalsOf(offers, attention) {
+    const needing = new Set(attention.map(({ path }) => path))
+    return offers
+      .filter((offer) => offer.kind === 'proposal' && !needing.has(offer.path))
+      .map((offer) => buildProposal({ path: offer.path, offer: offer.id }, { sendText }))
+      .filter((payload, index, all) => all.findIndex((other) => other.id === payload.id) === index)
+  }
+
+  function planFrom(progress, attention, offers = []) {
     const messages = []
     const seen = new Set()
     for (const payload of progress) {
@@ -126,7 +141,14 @@ export function createPublisher({ readSessions, readAttention = async () => [], 
       if (sent.get(payload.id) !== fingerprint(payload)) messages.push(payload)
     }
     for (const entry of attention) {
-      const payload = buildAttention(entry, { sendText })
+      // The iPhone shows the choices on the notification, read again from here by this id.
+      const payload = buildAttention({ ...entry, offer: offers.find((offer) => offer.path === entry.path)?.id }, { sendText })
+      seen.add(payload.id)
+      if (sent.get(payload.id) !== fingerprint(payload)) messages.push(payload)
+    }
+    for (const payload of proposalsOf(offers, attention)) {
+      const offer = offers.find((candidate) => candidate.id === payload.offer)
+      if (!sent.has(payload.id) && !(now() - (offer.since ?? 0) < PROPOSAL_FRESH_MS)) continue
       seen.add(payload.id)
       if (sent.get(payload.id) !== fingerprint(payload)) messages.push(payload)
     }
@@ -137,8 +159,8 @@ export function createPublisher({ readSessions, readAttention = async () => [], 
   }
 
   /** The messages one reading of the sessions calls for. */
-  function plan(sessions, attention = []) {
-    return planFrom(progressOf(sessions), attention)
+  function plan(sessions, attention = [], offers = []) {
+    return planFrom(progressOf(sessions), attention, offers)
   }
 
   /**
@@ -165,8 +187,9 @@ export function createPublisher({ readSessions, readAttention = async () => [], 
     const sessions = withAttention(await readSessions(), attention, now())
     const progress = progressOf(sessions)
     // Before sending, so that a phone that reads does not wait on one that FCM cannot reach.
-    remember(sendText ? progressOf(withLinks(withOffers(sessions, readOffers(), now()), readLinks(), now())) : progress)
-    const messages = planFrom(progress, attention)
+    const offers = sendText ? readOffers() : []
+    remember(sendText ? progressOf(withLinks(withOffers(sessions, offers, now()), readLinks(), now())) : progress)
+    const messages = planFrom(progress, attention, offers)
     let failure = null
     for (const message of messages) {
       try {

@@ -73,7 +73,7 @@ test('a reason is kept with its button, and a bad one costs only the reason', ()
 
 test('offersFrom keeps a workspace with one finished agent that proposed something', () => {
   assert.deepEqual(offersFrom([{ path: '/a', agents: [finished()] }]), [
-    { id: offerId(finished()), path: '/a', agent: 'claude', paneKey: 'tab:leaf', question: `done\n${PROPOSAL_NOTE}`, suggestions: [proposal()] }
+    { id: offerId(finished()), kind: 'proposal', since: finished().stateStartedAt ?? 0, path: '/a', agent: 'claude', paneKey: 'tab:leaf', question: `done\n${PROPOSAL_NOTE}`, suggestions: [proposal()] }
   ])
 })
 

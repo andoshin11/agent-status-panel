@@ -39,10 +39,16 @@ export function isDeviceToken(token) {
 }
 
 /**
- * The notification one message calls for, or null. Only the attention messages and their ends
- * reach the phone: a banner when an agent starts waiting, and a silent push that removes it.
+ * The notification one message calls for, or null. Only the attention and proposal messages and
+ * their ends reach the phone: a banner when an agent starts waiting or proposes what to do next, and
+ * a silent push that removes it.
  */
 export function buildNotification(data, nowSeconds) {
+  // With an offer, the app's notification service reads its choices from the Mac mini and adds them
+  // as buttons; the text never passes through Apple. Without one, or when it cannot, the banner
+  // stays as sent.
+  const choices = data.offer ? { 'mutable-content': 1 } : {}
+  const extra = data.offer ? { offer: data.offer } : {}
   if (data.state === 'attention') {
     return {
       pushType: 'alert',
@@ -53,13 +59,28 @@ export function buildNotification(data, nowSeconds) {
           alert: { title: data.workspace || 'エージェント', body: REASONS[data.reason] ?? '操作を待っています' },
           sound: 'default',
           'thread-id': 'attention',
-          'interruption-level': 'time-sensitive'
+          'interruption-level': 'time-sensitive',
+          ...choices
         },
-        id: data.id
+        id: data.id,
+        ...extra
       }
     }
   }
-  if (data.state === 'ended' && data.id.startsWith('attention-')) {
+  if (data.state === 'proposal') {
+    return {
+      pushType: 'alert',
+      priority: '10',
+      expiration: String(nowSeconds + ATTENTION_SECONDS),
+      payload: {
+        // Nothing waits for it, so it does not break through a focus.
+        aps: { alert: { title: data.workspace || 'エージェント', body: '次の作業を選べます' }, sound: 'default', 'thread-id': 'proposal', ...choices },
+        id: data.id,
+        ...extra
+      }
+    }
+  }
+  if (data.state === 'ended' && (data.id.startsWith('attention-') || data.id.startsWith('proposal-'))) {
     return {
       pushType: 'background',
       // Apple drops a background push sent at priority 10.

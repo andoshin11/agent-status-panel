@@ -126,3 +126,17 @@ test('a device token is lowercase hex', () => {
   assert.ok(!isDeviceToken(`${TOKEN}/../x`))
   assert.ok(!isDeviceToken(42))
 })
+
+test('a notification with an offer lets the app add its choices, and a proposal is a quieter banner', () => {
+  const asking = buildNotification({ ...ATTENTION, offer: '0123456789abcdef' }, 0).payload
+  assert.equal(asking.aps['mutable-content'], 1)
+  assert.equal(asking.offer, '0123456789abcdef')
+  assert.equal(buildNotification(ATTENTION, 0).payload.aps['mutable-content'], undefined, 'nothing to add without one')
+  const proposal = buildNotification({ v: '1', id: 'proposal-0123456789abcdef', state: 'proposal', offer: 'fedcba9876543210', workspace: 'app' }, 0)
+  assert.deepEqual(proposal.payload, {
+    aps: { alert: { title: 'app', body: '次の作業を選べます' }, sound: 'default', 'thread-id': 'proposal', 'mutable-content': 1 },
+    id: 'proposal-0123456789abcdef',
+    offer: 'fedcba9876543210'
+  })
+  assert.deepEqual(buildNotification({ v: '1', id: 'proposal-0123456789abcdef', state: 'ended' }, 0).payload.ended, 'proposal-0123456789abcdef')
+})
