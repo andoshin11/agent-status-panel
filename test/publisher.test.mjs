@@ -248,6 +248,22 @@ test('with sendText off there are no offers', async () => {
   assert.equal(context.publisher.snapshot().sessions[0].offer, undefined)
 })
 
+test('the reasons go on the board in button order, and never into a push', async () => {
+  const context = setupOffers()
+  context.offers = [{ ...OFFER, suggestions: [{ label: 'A', prompt: 'a', reason: 'why a' }, { label: 'B', prompt: 'b' }] }]
+  context.sessions = [session([task(1, 'One', 'in_progress')])]
+  await context.publisher.publish()
+  assert.equal(context.publisher.snapshot().sessions[0].reasons, '["why a",""]')
+  assert.equal(context.delivered[0].reasons, undefined)
+})
+
+test('no reasons field when no button has one', async () => {
+  const context = setupOffers()
+  context.sessions = [session([task(1, 'One', 'in_progress')])]
+  await context.publisher.publish()
+  assert.equal(context.publisher.snapshot().sessions[0].reasons, undefined)
+})
+
 test('a question goes on the board with its text, and never into a push', async () => {
   const context = setupOffers()
   context.offers = [{ ...OFFER, question: 'Which?', suggestions: [{ label: 'Red', keys: '1', detail: 'A warm color' }] }]

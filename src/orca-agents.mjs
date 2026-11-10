@@ -45,6 +45,7 @@ const NEXT_BLOCK = /```next[ \t]*\r?\n([\s\S]*?)\r?\n?```\s*$/
 const CONTROL = /[\u0000-\u001f\u007f]/
 const SCREEN_LINES = '60'
 const CONTEXT_MAX = 160
+const REASON_MAX = 80
 const PROPOSAL_NOTE = '次の作業を選べます（選ばなくても構いません）'
 // Not prose: a heading, a table, a list, a fenced block or a quote says little on its own.
 const NOT_PROSE = /^(#|\||```|>|[-*+] |\d+\. )/
@@ -122,7 +123,13 @@ export function parseSuggestions(message) {
   return list
     .filter(isSuggestion)
     .slice(0, SUGGESTIONS_MAX)
-    .map(({ label, prompt }) => ({ label: label.trim(), prompt: prompt.trim() }))
+    .map(({ label, prompt, reason }) => ({ label: label.trim(), prompt: prompt.trim(), ...reasonField(reason) }))
+}
+
+/** Optional, and only shown: a bad one costs the reason, not the button. */
+function reasonField(reason) {
+  if (typeof reason !== 'string' || !reason.trim() || CONTROL.test(reason)) return {}
+  return { reason: shorten(reason, REASON_MAX) }
 }
 
 /** Changes with every turn, so a button shown for an earlier reply matches nothing. */

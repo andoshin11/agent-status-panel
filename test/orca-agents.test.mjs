@@ -63,6 +63,14 @@ test('parseSuggestions finds nothing without a well-formed block at the very end
 
 const finished = (extra = {}) => agent('done', { paneKey: 'tab:leaf', hasLivePty: true, stateStartedAt: 5, lastAssistantMessage: reply(JSON.stringify([proposal()])), ...extra })
 
+test('a reason is kept with its button, and a bad one costs only the reason', () => {
+  const parse = (extra) => parseSuggestions(reply(JSON.stringify([{ ...proposal(), ...extra }])))
+  assert.deepEqual(parse({ reason: ' 消す前に必要です ' }), [{ ...proposal(), reason: '消す前に必要です' }])
+  for (const reason of [undefined, '', '  ', 3, null, 'a\nb']) assert.deepEqual(parse({ reason }), [proposal()], String(reason))
+  const [{ reason }] = parse({ reason: 'あ'.repeat(200) })
+  assert.equal([...reason].length, 80)
+})
+
 test('offersFrom keeps a workspace with one finished agent that proposed something', () => {
   assert.deepEqual(offersFrom([{ path: '/a', agents: [finished()] }]), [
     { id: offerId(finished()), path: '/a', agent: 'claude', paneKey: 'tab:leaf', question: `done\n${PROPOSAL_NOTE}`, suggestions: [proposal()] }
