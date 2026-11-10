@@ -341,7 +341,8 @@ export function pendingCall(text) {
     const content = Array.isArray(entry.message?.content) ? entry.message.content : []
     for (const part of content.toReversed()) {
       if (part?.type === 'tool_result') answered.add(part.tool_use_id)
-      if (part?.type === 'tool_use') return answered.has(part.id) ? null : { toolUseId: part.id, name: part.name, input: part.input ?? {} }
+      // The folder the shell was in, which a command that does not change it runs in.
+      if (part?.type === 'tool_use') return answered.has(part.id) ? null : { toolUseId: part.id, name: part.name, input: part.input ?? {}, ...(typeof entry.cwd === 'string' ? { cwd: entry.cwd } : {}) }
     }
   }
   return null

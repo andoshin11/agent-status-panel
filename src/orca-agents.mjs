@@ -6,6 +6,7 @@ import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { basename } from 'node:path'
+import { riskLabel, riskOf, whereOf } from './risk.mjs'
 
 const BUNDLED_CLI = '/Applications/Orca.app/Contents/Resources/bin/orca'
 const TRACKED_AGENTS = new Set(['claude', 'codex'])
@@ -247,20 +248,33 @@ async function claudeCall(worktree, agent, readCall, readPane) {
   return shown && isPermissionMenu(shown, describeCall(fromOrca).menuHint) ? fromOrca : null
 }
 
+/**
+ * The line a permission card asks with: what kind of call it is, the call, and where a shell command
+ * runs when that is not the workspace itself. The phone shows it as it is.
+ */
+export function permissionQuestion({ what, summary, risk, dangerous, where }) {
+  return `［${riskLabel(risk, dangerous)}］${what} を許可しますか？ ${summary}${where ? `\n場所: ${where}` : ''}`
+}
+
 async function permissionOffer(worktree, readCall, readPane) {
   const agent = soleAgent(worktree)
   if (agent?.agentType !== 'claude' || !PERMISSION_STATES.includes(agent.state) || !agent.toolName || agent.toolName === 'AskUserQuestion') return null
   const call = await claudeCall(worktree, agent, readCall, readPane)
   if (!call) return null
   const { summary, menuHint } = describeCall(call)
+  const risk = riskOf(call)
+  const dangerous = isDangerous(call)
+  const where = whereOf(call, worktree.path)
   return {
     id: offerId(agent, call.toolUseId),
     path: worktree.path,
     agent: agent.agentType,
     paneKey: agent.paneKey,
-    question: `${call.name} を許可しますか？ ${summary}`,
+    question: permissionQuestion({ what: call.name, summary, risk, dangerous, where }),
     menuHint,
-    dangerous: isDangerous(call),
+    risk,
+    where,
+    dangerous,
     suggestions: [
       { label: '許可', action: 'allow', detail: '今回だけ実行します' },
       { label: '拒否', action: 'deny', detail: '実行しません' }
@@ -282,14 +296,14 @@ function codexEditTarget(screen) {
 }
 
 /** Only a shell command and a file edit: the menus of other tools have not been seen. */
-function describeCodexCall(agent, shown) {
+function describeCodexCall(worktree, agent, shown) {
   if (agent.toolName === 'apply_patch') {
     const target = codexEditTarget(shown)
-    return target ? { what: 'ファイルの編集', summary: shorten(target, QUESTION_MAX), menuHint: CODEX_EDIT_MENU, dangerous: false } : null
+    return target ? { what: 'ファイルの編集', summary: shorten(target, QUESTION_MAX), menuHint: CODEX_EDIT_MENU, risk: 'write', dangerous: false, where: '' } : null
   }
   if (agent.toolName !== 'Bash' || typeof agent.toolInput !== 'string' || !agent.toolInput.trim()) return null
   const call = { name: 'Bash', input: { command: agent.toolInput } }
-  return { what: 'Bash', ...describeCall(call), dangerous: isDangerous(call) }
+  return { what: 'Bash', ...describeCall(call), risk: riskOf(call), dangerous: isDangerous(call), where: whereOf(call, worktree.path) }
 }
 
 async function codexPermissionOffer(worktree, readPane) {
@@ -297,15 +311,17 @@ async function codexPermissionOffer(worktree, readPane) {
   if (agent?.agentType !== 'codex' || !PERMISSION_STATES.includes(agent.state) || !agent.toolName) return null
   // Orca keeps the last toolName after the call, and other prompts also read as waiting. The menu cannot.
   const shown = await readPane(agent.paneKey).catch(() => null)
-  const call = shown ? describeCodexCall(agent, shown) : null
+  const call = shown ? describeCodexCall(worktree, agent, shown) : null
   if (!call || !isCodexPermissionMenu(shown, call.menuHint)) return null
   return {
     id: offerId(agent, call.summary),
     path: worktree.path,
     agent: agent.agentType,
     paneKey: agent.paneKey,
-    question: `${call.what} を許可しますか？ ${call.summary}`,
+    question: permissionQuestion(call),
     menuHint: call.menuHint,
+    risk: call.risk,
+    where: call.where,
     dangerous: call.dangerous,
     suggestions: [
       { label: '許可', action: 'allow', detail: '今回だけ実行します' },
