@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { createQuestionReader, pendingCall, pendingQuestion } from '../src/claude-sessions.mjs'
+import { createQuestionReader, pendingCall, pendingQuestion, turnEnded } from '../src/claude-sessions.mjs'
 import { makeHome, SESSION_A, SESSION_B } from './helpers.mjs'
 
 const ask = (id) => JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'AskUserQuestion', input: { questions: [{ question: 'Q' }] } }] } })
@@ -63,4 +63,15 @@ test('a call with a result is not pending, as after a denial', () => {
   const inFolder = JSON.stringify({ ...JSON.parse(call('c')), cwd: '/w/a/apps' })
   assert.equal(pendingCall(inFolder).cwd, '/w/a/apps', 'the folder the shell was in')
   assert.equal(pendingCall(''), null)
+})
+
+test('a turn is over once Claude Code wrote its duration, and not after a prompt or a result', () => {
+  const entry = (value) => JSON.stringify(value)
+  const ended = entry({ type: 'system', subtype: 'turn_duration' })
+  const reply = entry({ type: 'assistant', message: { content: [{ type: 'text', text: 'done' }] } })
+  const prompt = entry({ type: 'user', message: { content: 'next' } })
+  assert.equal(turnEnded([reply, ended, entry({ type: 'system', subtype: 'away_summary' }), entry({ type: 'pr-link' })].join('\n')), true)
+  assert.equal(turnEnded([reply, ended, prompt].join('\n')), null)
+  assert.equal(turnEnded([ended, prompt, reply].join('\n')), null)
+  assert.equal(turnEnded(reply), null)
 })
