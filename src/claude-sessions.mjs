@@ -53,7 +53,8 @@ export async function readRunningSessionIds(sessionsRoot) {
   return new Set((await readRunningSessions(sessionsRoot)).map((entry) => entry.sessionId))
 }
 
-async function readRunningSessions(sessionsRoot) {
+/** The running Claude sessions as Claude Code records them: sessionId, pid, cwd. */
+export async function readRunningSessions(sessionsRoot) {
   let names
   try {
     names = await readdir(sessionsRoot)

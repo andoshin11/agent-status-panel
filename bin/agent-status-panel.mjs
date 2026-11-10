@@ -14,7 +14,8 @@ import { startDaemon } from '../src/daemon.mjs'
 import { createFcmSender } from '../src/fcm.mjs'
 import { buildPlist, LABEL } from '../src/launchd.mjs'
 import { createNextSender } from '../src/next-actions.mjs'
-import { createAgentReader } from '../src/orca-agents.mjs'
+import { createAgentReader, readScreen, resolveOrcaCli, runOrca } from '../src/orca-agents.mjs'
+import { createHookReader, createLaunchReader, createRestarter } from '../src/restart.mjs'
 import { createSuggestionReader } from '../src/prompt-suggestions.mjs'
 import { createPublisher, loadState } from '../src/publisher.mjs'
 import { startStatusServer, STATUS_PATH } from '../src/server.mjs'
@@ -68,9 +69,11 @@ const commands = {
     const readSuggestions = createSuggestionReader({ home })
     const readCall = createPendingCallReader(home)
     const readTurnEnded = createTurnReader(home)
+    const readHook = createHookReader(config.launchHookFile)
+    const readLaunch = createLaunchReader(home, readHook)
     const { publish, snapshot } = createPublisher({
       readSessions: createSessionReader({ home }),
-      ...createAgentReader({ readQuestion, readSuggestions, readCall, readTurnEnded, log }),
+      ...createAgentReader({ readQuestion, readSuggestions, readCall, readTurnEnded, readLaunch, log }),
       send,
       statePath: file,
       sent: await loadState(file),
@@ -83,7 +86,20 @@ const commands = {
     log('watching the task lists')
     if (config.httpPort !== null) {
       // The agent is at work once it has the prompt, so the buttons leave the board right away.
-      const next = createNextSender({ readQuestion, readSuggestions, readCall, readTurnEnded, onSent: () => void daemon.run(), log })
+      const cli = resolveOrcaCli()
+      const restart = createRestarter({
+        home,
+        readHook,
+        readLaunch,
+        readScreen: (handle) => readScreen(cli, handle),
+        send: async (handle, text, enter) => {
+          const result = await runOrca(cli, ['terminal', 'send', '--terminal', handle, '--text', text, ...(enter ? ['--enter'] : []), '--json'])
+          if (!result.send?.accepted) throw new Error('the terminal did not accept the text')
+        },
+        create: (path, title, command) => runOrca(cli, ['terminal', 'create', '--worktree', `path:${path}`, '--title', title, '--command', command, '--json']),
+        log
+      })
+      const next = createNextSender({ readQuestion, readSuggestions, readCall, readTurnEnded, readLaunch, restart, onSent: () => void daemon.run(), log })
       await startStatusServer({ port: config.httpPort, snapshot, register, next, allowedLogin: config.allowedLogin })
       log(`serving the sessions at http://127.0.0.1:${config.httpPort}${STATUS_PATH}`)
     }

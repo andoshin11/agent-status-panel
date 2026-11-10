@@ -97,6 +97,9 @@ test('a press says when a draft is in the way', async (t) => {
   const { server, press } = await serveNext(async () => 'typing')
   t.after(() => server.close())
   assert.equal((await press(JSON.stringify({ offer: 'a', index: 0 }))).status, 423)
+  const restart = await serveNext(async () => 'draft')
+  t.after(() => restart.server.close())
+  assert.equal((await restart.press(JSON.stringify({ offer: 'a', index: 0 }))).status, 423, 'also before a restart')
 })
 
 test('a press can carry the answers of a form', async (t) => {
