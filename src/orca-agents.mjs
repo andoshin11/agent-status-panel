@@ -277,7 +277,14 @@ export function permissionQuestion({ what, summary, risk, dangerous, where }) {
   return `［${riskLabel(risk, dangerous)}］${what} を許可しますか？ ${summary}${where ? `\n場所: ${where}` : ''}`
 }
 
-async function permissionOffer(worktree, readCall, readPane) {
+const REST_CARD = { label: 'このターンの残りも許可', action: 'allow-rest', detail: '今回を許可し、このターンの残りも、書き換えるまでのものは自動で許可します' }
+const ALLOWED_SHOWN = 5
+
+/**
+ * A session started with the Milestone plugin's PermissionRequest hook can allow the rest of its
+ * turn: one more button, never for a dangerous command, since the grant would not cover the next.
+ */
+async function permissionOffer(worktree, readCall, readPane, readRest) {
   const agent = soleAgent(worktree)
   if (agent?.agentType !== 'claude' || !PERMISSION_STATES.includes(agent.state) || !agent.toolName || agent.toolName === 'AskUserQuestion') return null
   const call = await claudeCall(worktree, agent, readCall, readPane)
@@ -286,6 +293,7 @@ async function permissionOffer(worktree, readCall, readPane) {
   const risk = riskOf(call)
   const dangerous = isDangerous(call)
   const where = whereOf(call, worktree.path)
+  const rest = dangerous ? null : await readRest(worktree.path).catch(() => null)
   return {
     id: offerId(agent, call.toolUseId),
     path: worktree.path,
@@ -298,9 +306,19 @@ async function permissionOffer(worktree, readCall, readPane) {
     dangerous,
     suggestions: [
       { label: '許可', action: 'allow', detail: '今回だけ実行します' },
-      { label: '拒否', action: 'deny', detail: '実行しません' }
-    ]
+      { label: '拒否', action: 'deny', detail: '実行しません' },
+      ...(rest ? [REST_CARD] : [])
+    ],
+    ...(rest ? { sessionId: rest.sessionId } : {})
   }
+}
+
+/** What the rest of this turn allowed without a button, after what an offer says, to read later. */
+function withAllowed(offer, allowed) {
+  if (!allowed?.length || typeof offer.question !== 'string') return offer
+  const shown = allowed.slice(-ALLOWED_SHOWN).map((line) => shorten(line, OPTION_MAX))
+  const more = allowed.length > shown.length ? `（ほか ${allowed.length - shown.length} 件）` : ''
+  return { ...offer, allowed, question: `${offer.question}\nこのターンでまとめて許可: ${shown.join(' / ')}${more}` }
 }
 
 /** Keys are pressed only on Codex's menu for this very call, read from the screen just before. */
@@ -372,8 +390,11 @@ async function questionOffer(worktree, readQuestion) {
  * What every agent offers now: what it proposed after finishing, and what it is asking.
  * @param readLaunch  resolves a workspace path to its Claude session told something older than the
  *   Milestone plugin says now, see restart.mjs
+ * @param readRest  resolves a workspace path to `{ sessionId }` when its Claude session can allow
+ *   the rest of a turn, else null
+ * @param readAllowed  resolves a workspace path to what the rest of its Claude session's turn allowed
  */
-export async function offersOf(worktrees, readQuestion, readSuggestions = async () => new Map(), readCall = async () => null, readPane = async () => null, readLaunch = async () => null) {
+export async function offersOf(worktrees, readQuestion, readSuggestions = async () => new Map(), readCall = async () => null, readPane = async () => null, readLaunch = async () => null, { readRest = async () => null, readAllowed = async () => [] } = {}) {
   const finished = worktrees.map(soleAgent).filter((agent) => agent?.agentType === 'claude' && agent.state === 'done')
   const shown = finished.length > 0 ? await readSuggestions(finished.map((agent) => agent.paneKey)).catch(() => new Map()) : new Map()
   const launches = new Map()
@@ -385,10 +406,14 @@ export async function offersOf(worktrees, readQuestion, readSuggestions = async 
   }
   const offers = offersFrom(worktrees, shown, launches)
   for (const worktree of worktrees) {
-    const offer = (await questionOffer(worktree, readQuestion)) ?? (await permissionOffer(worktree, readCall, readPane)) ?? (await codexPermissionOffer(worktree, readPane))
+    const offer = (await questionOffer(worktree, readQuestion)) ?? (await permissionOffer(worktree, readCall, readPane, readRest)) ?? (await codexPermissionOffer(worktree, readPane))
     if (offer) offers.push(offer)
   }
-  return offers
+  const listed = []
+  for (const offer of offers) {
+    listed.push(offer.agent === 'claude' && (offer.kind === 'proposal' || offer.menuHint) ? withAllowed(offer, await readAllowed(offer.path).catch(() => [])) : offer)
+  }
+  return listed
 }
 
 /** The opening of the reply, then why cards follow it: on their own they do not say. */
@@ -479,7 +504,7 @@ export async function readWorktrees(cli) {
  * While Orca cannot answer, the last answer stands: nothing is known to have changed, and clearing
  * it would send a notification again when Orca comes back.
  */
-export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees, readQuestion = async () => null, readSuggestions, readCall, readTurnEnded = async () => null, readLaunch, readPane = (paneKey) => readPaneScreen(cli, paneKey), log = () => {} } = {}) {
+export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees, readQuestion = async () => null, readSuggestions, readCall, readTurnEnded = async () => null, readLaunch, readGrants, readPane = (paneKey) => readPaneScreen(cli, paneKey), log = () => {} } = {}) {
   let attention = []
   let offers = []
   let links = []
@@ -489,7 +514,7 @@ export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees
       try {
         const worktrees = await settleAgents(await read(cli), readTurnEnded)
         attention = attentionFrom(worktrees)
-        offers = await offersOf(worktrees, readQuestion, readSuggestions, readCall, readPane, readLaunch)
+        offers = await offersOf(worktrees, readQuestion, readSuggestions, readCall, readPane, readLaunch, readGrants)
         links = linksFrom(worktrees)
         failing = false
       } catch (error) {

@@ -15,7 +15,7 @@ import { createFcmSender } from '../src/fcm.mjs'
 import { buildPlist, LABEL } from '../src/launchd.mjs'
 import { createNextSender } from '../src/next-actions.mjs'
 import { createAgentReader, readScreen, resolveOrcaCli, runOrca } from '../src/orca-agents.mjs'
-import { createHookReader, createLaunchReader, createRestarter } from '../src/restart.mjs'
+import { createHookReader, createLaunchInfoReader, createLaunchReader, createRestarter, hasGrantHook } from '../src/restart.mjs'
 import { createSuggestionReader } from '../src/prompt-suggestions.mjs'
 import { createPublisher, loadState } from '../src/publisher.mjs'
 import { startStatusServer, STATUS_PATH } from '../src/server.mjs'
@@ -71,10 +71,32 @@ const commands = {
     const readCall = createPendingCallReader(home)
     const readTurnEnded = createTurnReader(home)
     const readHook = createHookReader(config.launchHookFile)
-    const readLaunch = createLaunchReader(home, readHook)
+    const readLaunchInfo = createLaunchInfoReader(home)
+    const readLaunch = createLaunchReader(home, readHook, { readLaunchInfo })
+    // "Allow the rest of this turn" for a session started with the plugin's hook, by its grants.
+    const grantsOf = async (path) => {
+      const hook = await readHook()
+      const info = hook?.grants ? await readLaunchInfo(path) : null
+      return info && hasGrantHook(info.args) ? { access: hook.grants.createGrantAccess(home), sessionId: info.sessionId } : null
+    }
+    const readGrants = {
+      readRest: async (path) => {
+        const found = await grantsOf(path)
+        return found ? { sessionId: found.sessionId } : null
+      },
+      readAllowed: async (path) => {
+        const found = await grantsOf(path)
+        return found ? found.access.allowed(found.sessionId) : []
+      }
+    }
+    const grantRest = async (sessionId) => {
+      const hook = await readHook()
+      if (!hook?.grants) throw new Error('the Milestone plugin has no grants')
+      await hook.grants.createGrantAccess(home).grant(sessionId)
+    }
     const { publish, snapshot } = createPublisher({
       readSessions: createSessionReader({ home }),
-      ...createAgentReader({ readQuestion, readSuggestions, readCall, readTurnEnded, readLaunch, log }),
+      ...createAgentReader({ readQuestion, readSuggestions, readCall, readTurnEnded, readLaunch, readGrants, log }),
       send,
       statePath: file,
       sent: await loadState(file),
@@ -100,7 +122,7 @@ const commands = {
         create: (path, title, command) => runOrca(cli, ['terminal', 'create', '--worktree', `path:${path}`, '--title', title, '--command', command, '--json']),
         log
       })
-      const next = createNextSender({ readQuestion, readSuggestions, readCall, readTurnEnded, readLaunch, restart, onSent: () => void daemon.run(), log })
+      const next = createNextSender({ readQuestion, readSuggestions, readCall, readTurnEnded, readLaunch, readGrants, restart, grantRest, onSent: () => void daemon.run(), log })
       await startStatusServer({ port: config.httpPort, snapshot, register, next, allowedLogin: config.allowedLogin })
       log(`serving the sessions at http://127.0.0.1:${config.httpPort}${STATUS_PATH}`)
     }
