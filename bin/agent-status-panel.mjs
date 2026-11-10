@@ -104,9 +104,9 @@ const commands = {
       sendText: config.sendText,
       log
     })
-    const daemon = startDaemon({ publish, dirs: [claudePaths(home).tasksRoot, progressDir(home)], log })
-    await daemon.ready
-    log('watching the task lists')
+    // Serving first: a notification sent by the first reading makes the iPhone read the sessions at
+    // once, to add the buttons, and it would find nothing listening yet.
+    let daemon = null
     if (config.httpPort !== null) {
       // The agent is at work once it has the prompt, so the buttons leave the board right away.
       const cli = resolveOrcaCli()
@@ -122,10 +122,13 @@ const commands = {
         create: (path, title, command) => runOrca(cli, ['terminal', 'create', '--worktree', `path:${path}`, '--title', title, '--command', command, '--json']),
         log
       })
-      const next = createNextSender({ readQuestion, readSuggestions, readCall, readTurnEnded, readLaunch, readGrants, restart, grantRest, onSent: () => void daemon.run(), log })
+      const next = createNextSender({ readQuestion, readSuggestions, readCall, readTurnEnded, readLaunch, readGrants, restart, grantRest, onSent: () => void daemon?.run(), log })
       await startStatusServer({ port: config.httpPort, snapshot, register, next, allowedLogin: config.allowedLogin })
       log(`serving the sessions at http://127.0.0.1:${config.httpPort}${STATUS_PATH}`)
     }
+    daemon = startDaemon({ publish, dirs: [claudePaths(home).tasksRoot, progressDir(home)], log })
+    await daemon.ready
+    log('watching the task lists')
   },
 
   /** Prints what would be sent if nothing had been sent yet. It needs no settings and sends nothing. */
