@@ -53,6 +53,9 @@ const MARKDOWN_LINK = /\[([^\]]*)\]\([^)]*\)/g
 const MARKDOWN_EMPHASIS = /\*\*|`/g
 const PERMISSION_STATES = ['waiting', 'permission']
 // Codex's permission menu. Its second option stops asking for good, so only the first is ever pressed.
+// The first option differs from nothing else on the menu: the other numbers change with the tool.
+const ALLOW_ONCE_LINE = /^\s*(?:❯\s*)?1\. Yes\s*$/m
+const PERMISSION_FOOTER = 'Esc to cancel'
 const CODEX_ALLOW_ONCE_LINE = /^\s*(?:›\s*)?1\. Yes, proceed \(y\)\s*$/m
 const CODEX_PERMISSION_FOOTER = 'Press enter to confirm or esc to cancel'
 const CODEX_EDIT_MENU = 'Would you like to make the following edits?'
@@ -224,12 +227,31 @@ function describeCall({ name, input }) {
   return { summary: shorten(JSON.stringify(input), QUESTION_MAX), menuHint: '' }
 }
 
-async function permissionOffer(worktree, readCall) {
+/** Keys are pressed only on the menu for this very call, read from the screen just before. */
+export function isPermissionMenu(screen, menuHint) {
+  return ALLOW_ONCE_LINE.test(screen) && screen.includes(PERMISSION_FOOTER) && screen.includes(menuHint)
+}
+
+/**
+ * The call a Claude Code menu asks about. The transcript says best, and it cannot say "waiting" after
+ * the user answered at the terminal, as Orca can. But while several calls of one turn wait, Claude
+ * Code has written none of them yet: then a shell command is taken from Orca, and only while its
+ * menu is on the screen.
+ */
+async function claudeCall(worktree, agent, readCall, readPane) {
+  const call = await readCall(worktree.path).catch(() => null)
+  if (call) return call.name === agent.toolName ? call : null
+  if (agent.toolName !== 'Bash' || typeof agent.toolInput !== 'string' || !agent.toolInput.trim()) return null
+  const fromOrca = { toolUseId: agent.toolInput, name: 'Bash', input: { command: agent.toolInput } }
+  const shown = await readPane(agent.paneKey).catch(() => null)
+  return shown && isPermissionMenu(shown, describeCall(fromOrca).menuHint) ? fromOrca : null
+}
+
+async function permissionOffer(worktree, readCall, readPane) {
   const agent = soleAgent(worktree)
   if (agent?.agentType !== 'claude' || !PERMISSION_STATES.includes(agent.state) || !agent.toolName || agent.toolName === 'AskUserQuestion') return null
-  // Orca can keep saying "waiting" after the user answered at the terminal. The transcript cannot.
-  const call = await readCall(worktree.path).catch(() => null)
-  if (call?.name !== agent.toolName) return null
+  const call = await claudeCall(worktree, agent, readCall, readPane)
+  if (!call) return null
   const { summary, menuHint } = describeCall(call)
   return {
     id: offerId(agent, call.toolUseId),
@@ -315,7 +337,7 @@ export async function offersOf(worktrees, readQuestion, readSuggestions = async 
   const shown = finished.length > 0 ? await readSuggestions(finished.map((agent) => agent.paneKey)).catch(() => new Map()) : new Map()
   const offers = offersFrom(worktrees, shown)
   for (const worktree of worktrees) {
-    const offer = (await questionOffer(worktree, readQuestion)) ?? (await permissionOffer(worktree, readCall)) ?? (await codexPermissionOffer(worktree, readPane))
+    const offer = (await questionOffer(worktree, readQuestion)) ?? (await permissionOffer(worktree, readCall, readPane)) ?? (await codexPermissionOffer(worktree, readPane))
     if (offer) offers.push(offer)
   }
   return offers

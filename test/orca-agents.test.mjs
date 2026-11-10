@@ -314,6 +314,23 @@ test('no buttons when the transcript says the call is over or is another call', 
   await none([permissionAgent(), permissionAgent({ paneKey: 'tab:other' })], bash('ls'))
 })
 
+test('while several calls of one turn wait unwritten, a shell command comes from Orca and its menu', async () => {
+  const MENU_FOR = (command) => `Bash command\n ${command}\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and always allow\n   4. No\n Esc to cancel · Tab to amend`
+  const fromScreen = (agents, shown) => offersOf([{ path: '/a', agents }], async () => null, undefined, async () => null, async () => shown)
+  const agent = permissionAgent({ toolName: 'Bash', toolInput: 'touch allowed.txt' })
+  const [offer] = await fromScreen([agent], MENU_FOR('touch allowed.txt'))
+  assert.equal(offer.question, 'Bash を許可しますか？ touch allowed.txt')
+  assert.equal(offer.menuHint, 'touch allowed.txt')
+  assert.equal(offer.id, offerId(agent, 'touch allowed.txt'))
+  assert.equal((await fromScreen([permissionAgent({ toolName: 'Bash', toolInput: 'rm -rf x' })], MENU_FOR('rm -rf x')))[0].dangerous, true)
+  assert.deepEqual(await fromScreen([agent], MENU_FOR('rm -rf x')), [], 'another menu')
+  assert.deepEqual(await fromScreen([agent], 'no menu'), [])
+  assert.deepEqual(await fromScreen([agent], null), [])
+  assert.deepEqual(await fromScreen([permissionAgent({ toolName: 'Write', toolInput: 'a.txt' })], MENU_FOR('a.txt')), [], 'only a shell command')
+  // The transcript, when it has the call, still decides.
+  assert.deepEqual(await offersOf([{ path: '/a', agents: [agent] }], async () => null, undefined, async () => ({ toolUseId: 't', name: 'Read', input: {} }), async () => MENU_FOR('touch allowed.txt')), [])
+})
+
 const codexAgent = (extra = {}) => waiting({ agentType: 'codex', toolName: 'Bash', toolInput: 'touch a', ...extra })
 const codexOffers = (agents, shown) => offersOf([{ path: '/a', agents }], async () => null, undefined, undefined, async () => shown)
 const CODEX_FOOT = "› 1. Yes, proceed (y)\n  2. Yes, and don't ask again (p)\n  3. No, and tell Codex what to do differently (esc)\n  Press enter to confirm or esc to cancel"
