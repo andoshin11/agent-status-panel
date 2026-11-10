@@ -90,6 +90,25 @@ function mainAgents(worktree) {
   return (worktree.agents ?? []).filter((agent) => TRACKED_AGENTS.has(agent.agentType) && !agent.parentPaneKey)
 }
 
+/**
+ * The workspaces with each Claude agent that Orca calls working but whose turn is over marked as
+ * done, and `background`: shells it started go on running, and it waits for the user. Its proposals
+ * then show as for any agent that finished.
+ * @param readTurnEnded  resolves a workspace path to whether its Claude session ended its turn
+ */
+export async function settleAgents(worktrees, readTurnEnded) {
+  const settled = []
+  for (const worktree of worktrees) {
+    const working = mainAgents(worktree).filter((agent) => agent.agentType === 'claude' && agent.state === 'working' && agent.hasLivePty === true)
+    if (worktree.isArchived || working.length !== 1 || !(await readTurnEnded(worktree.path).catch(() => null))) {
+      settled.push(worktree)
+      continue
+    }
+    settled.push({ ...worktree, agents: worktree.agents.map((agent) => (agent === working[0] ? { ...agent, state: 'done', background: true } : agent)) })
+  }
+  return settled
+}
+
 /** One entry per workspace with a main agent that needs the user. */
 export function attentionFrom(worktrees) {
   const attention = []
@@ -434,7 +453,7 @@ export async function readWorktrees(cli) {
  * While Orca cannot answer, the last answer stands: nothing is known to have changed, and clearing
  * it would send a notification again when Orca comes back.
  */
-export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees, readQuestion = async () => null, readSuggestions, readCall, readPane = (paneKey) => readPaneScreen(cli, paneKey), log = () => {} } = {}) {
+export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees, readQuestion = async () => null, readSuggestions, readCall, readTurnEnded = async () => null, readPane = (paneKey) => readPaneScreen(cli, paneKey), log = () => {} } = {}) {
   let attention = []
   let offers = []
   let links = []
@@ -442,7 +461,7 @@ export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees
   return {
     async readAttention() {
       try {
-        const worktrees = await read(cli)
+        const worktrees = await settleAgents(await read(cli), readTurnEnded)
         attention = attentionFrom(worktrees)
         offers = await offersOf(worktrees, readQuestion, readSuggestions, readCall, readPane)
         links = linksFrom(worktrees)

@@ -348,6 +348,31 @@ export function pendingCall(text) {
   return null
 }
 
+/**
+ * Whether the last turn in a transcript is over: Claude Code writes `turn_duration` when a turn ends,
+ * and a prompt or a tool result after it starts another. Orca keeps an agent "working" while shells
+ * it started in the background run, even when it waits for the user.
+ */
+export function turnEnded(text) {
+  for (const line of text.split('\n').toReversed()) {
+    if (!line.includes('"type"')) continue
+    let entry
+    try {
+      entry = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (entry.type === 'system' && entry.subtype === 'turn_duration') return true
+    if (entry.type === 'user' || entry.type === 'assistant') return null
+  }
+  return null
+}
+
+/** Finds whether the running Claude session in a workspace has ended its turn. */
+export function createTurnReader(home) {
+  return createPendingReader(home, turnEnded)
+}
+
 /** Finds the question the running Claude session in a workspace is asking now. */
 export function createQuestionReader(home) {
   return createPendingReader(home, pendingQuestion)

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { answerKeys, attentionFrom, createAgentReader, isDangerous, linksFrom, offerId, offersFrom, offersOf, parseSuggestions, questionButtons, questionForm, resolveOrcaCli } from '../src/orca-agents.mjs'
+import { answerKeys, attentionFrom, createAgentReader, isDangerous, linksFrom, offerId, offersFrom, offersOf, parseSuggestions, questionButtons, questionForm, resolveOrcaCli, settleAgents } from '../src/orca-agents.mjs'
 
 const agent = (state, extra = {}) => ({ agentType: 'claude', state, prompt: 'secret', ...extra })
 
@@ -417,4 +417,20 @@ test('linksFrom leaves out what is not worth opening', () => {
   none({ agents: [replied(PR(1))], isArchived: true })
   none({ agents: [], linkedPR: { state: 'merged', url: PR(1) } })
   none({ agents: [], linkedPR: { state: 'open', url: 'https://example.com/x' } })
+})
+
+test('a Claude agent Orca calls working but whose turn is over waits, with its proposals', async () => {
+  const reply = 'できました\n```next\n[{"label":"A","prompt":"do a"}]\n```'
+  const busy = agent('working', { paneKey: 'tab:leaf', hasLivePty: true, stateStartedAt: 7, lastAssistantMessage: reply })
+  const worktrees = [{ path: '/a', agents: [busy] }, { path: '/b', agents: [{ ...busy, paneKey: 'tab:b' }] }]
+  const settled = await settleAgents(worktrees, async (path) => path === '/a')
+  assert.deepEqual(settled[0].agents[0], { ...busy, state: 'done', background: true })
+  assert.equal(settled[1], worktrees[1], 'a turn not known to be over stays as Orca says')
+  assert.deepEqual(offersFrom(settled).map((offer) => offer.path), ['/a'])
+  assert.equal((await settleAgents(worktrees, async () => { throw new Error('no transcript') }))[0], worktrees[0])
+  const two = [{ path: '/a', agents: [busy, { ...busy, paneKey: 'tab:2' }] }]
+  assert.equal((await settleAgents(two, async () => true))[0], two[0], 'two agents cannot be told apart')
+  const reader = createAgentReader({ cli: 'orca', read: async () => worktrees, readTurnEnded: async (path) => path === '/a' })
+  await reader.readAttention()
+  assert.equal(reader.readOffers().length, 1)
 })

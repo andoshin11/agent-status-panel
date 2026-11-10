@@ -7,7 +7,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { claudePaths, createPendingCallReader, createQuestionReader } from '../src/claude-sessions.mjs'
+import { claudePaths, createPendingCallReader, createQuestionReader, createTurnReader } from '../src/claude-sessions.mjs'
 import { createApnsSender, createDeviceRegistry, ENVIRONMENTS, isDeviceToken } from '../src/apns.mjs'
 import { apnsDevicesPath, configPath, DEFAULT_STALE_MINUTES, loadApnsKey, loadConfig, loadServiceAccount, statePath } from '../src/config.mjs'
 import { startDaemon } from '../src/daemon.mjs'
@@ -67,9 +67,10 @@ const commands = {
     const readQuestion = createQuestionReader(home)
     const readSuggestions = createSuggestionReader({ home })
     const readCall = createPendingCallReader(home)
+    const readTurnEnded = createTurnReader(home)
     const { publish, snapshot } = createPublisher({
       readSessions: createSessionReader({ home }),
-      ...createAgentReader({ readQuestion, readSuggestions, readCall, log }),
+      ...createAgentReader({ readQuestion, readSuggestions, readCall, readTurnEnded, log }),
       send,
       statePath: file,
       sent: await loadState(file),
@@ -82,7 +83,7 @@ const commands = {
     log('watching the task lists')
     if (config.httpPort !== null) {
       // The agent is at work once it has the prompt, so the buttons leave the board right away.
-      const next = createNextSender({ readQuestion, readSuggestions, readCall, onSent: () => void daemon.run(), log })
+      const next = createNextSender({ readQuestion, readSuggestions, readCall, readTurnEnded, onSent: () => void daemon.run(), log })
       await startStatusServer({ port: config.httpPort, snapshot, register, next, allowedLogin: config.allowedLogin })
       log(`serving the sessions at http://127.0.0.1:${config.httpPort}${STATUS_PATH}`)
     }

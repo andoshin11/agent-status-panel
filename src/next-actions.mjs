@@ -1,7 +1,7 @@
 // Sends an action an agent proposed, or the answer to its question, when the user presses a button.
 // The phone says only which button: what to send comes from what the agent wrote, read again now,
 // so a phone cannot send anything else and a button from an earlier turn does nothing.
-import { answerKeys, isCodexPermissionMenu, isPane, isPermissionMenu, listTerminals, offersOf, readPaneScreen, readScreen, readWorktrees, resolveOrcaCli, runOrca } from './orca-agents.mjs'
+import { answerKeys, isCodexPermissionMenu, isPane, isPermissionMenu, listTerminals, offersOf, readPaneScreen, readScreen, readWorktrees, resolveOrcaCli, runOrca, settleAgents } from './orca-agents.mjs'
 
 export { isPermissionMenu }
 
@@ -43,7 +43,7 @@ async function sendKeys(cli, handle, keys) {
  *   prompt, false when that button is no longer on offer, 'typing' when a draft in Codex's
  *   input box would be sent along with it, or 'confirm' to allow a dangerous command unconfirmed. It throws when sending fails.
  */
-export function createNextSender({ cli = resolveOrcaCli(), read = readWorktrees, readQuestion = async () => null, readSuggestions, readCall, terminals = listTerminals, send = sendPrompt, pressKeys = sendKeys, stash = stashDraft, screen = readScreen, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), onSent = () => {}, log = () => {} } = {}) {
+export function createNextSender({ cli = resolveOrcaCli(), read = readWorktrees, readQuestion = async () => null, readSuggestions, readCall, readTurnEnded = async () => null, terminals = listTerminals, send = sendPrompt, pressKeys = sendKeys, stash = stashDraft, screen = readScreen, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), onSent = () => {}, log = () => {} } = {}) {
   const used = new Set()
 
   function take(offer) {
@@ -64,7 +64,7 @@ export function createNextSender({ cli = resolveOrcaCli(), read = readWorktrees,
 
   return async function next({ offer, index, answers, confirmed = false }) {
     if (used.has(offer)) return false
-    const found = (await offersOf(await read(cli), readQuestion, readSuggestions, readCall, (paneKey) => readPaneScreen(cli, paneKey, terminals, screen))).find((candidate) => candidate.id === offer)
+    const found = (await offersOf(await settleAgents(await read(cli), readTurnEnded), readQuestion, readSuggestions, readCall, (paneKey) => readPaneScreen(cli, paneKey, terminals, screen))).find((candidate) => candidate.id === offer)
     const keys = answers ? answerKeys(found?.questions, answers) : null
     const suggestion = answers ? null : found?.suggestions[index]
     if (!keys && !suggestion) return false
