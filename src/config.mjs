@@ -55,8 +55,14 @@ export async function loadConfig(path = configPath()) {
   if (allowedLogin !== null && (typeof allowedLogin !== 'string' || !allowedLogin)) {
     throw new Error('config.allowedLogin must be a Tailscale login name')
   }
+  // The Milestone plugin's launch hook, which says what a Claude session is told now.
+  const launchHookFile = config.launchHookFile ?? null
+  if (launchHookFile !== null && (typeof launchHookFile !== 'string' || !isAbsolute(launchHookFile))) {
+    throw new Error('config.launchHookFile must be an absolute path')
+  }
   return {
     allowedLogin,
+    launchHookFile,
     deviceTokens: config.deviceTokens,
     apns: config.apns === undefined ? null : apnsOf(config.apns),
     serviceAccountFile: config.serviceAccountFile,

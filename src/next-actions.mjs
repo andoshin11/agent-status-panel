@@ -41,9 +41,11 @@ async function sendKeys(cli, handle, keys) {
 /**
  * @returns a function that takes `{ offer, index }` and resolves to true once the agent has the
  *   prompt, false when that button is no longer on offer, 'typing' when a draft in Codex's
- *   input box would be sent along with it, or 'confirm' to allow a dangerous command unconfirmed. It throws when sending fails.
+ *   input box would be sent along with it, 'confirm' to allow a dangerous command unconfirmed, or
+ *   'draft' when a restart would lose what is typed in Claude Code's input box. It throws when sending fails.
+ * @param restart  starts a Claude session again, see restart.mjs
  */
-export function createNextSender({ cli = resolveOrcaCli(), read = readWorktrees, readQuestion = async () => null, readSuggestions, readCall, readTurnEnded = async () => null, terminals = listTerminals, send = sendPrompt, pressKeys = sendKeys, stash = stashDraft, screen = readScreen, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), onSent = () => {}, log = () => {} } = {}) {
+export function createNextSender({ cli = resolveOrcaCli(), read = readWorktrees, readQuestion = async () => null, readSuggestions, readCall, readTurnEnded = async () => null, readLaunch, restart = async () => false, terminals = listTerminals, send = sendPrompt, pressKeys = sendKeys, stash = stashDraft, screen = readScreen, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), onSent = () => {}, log = () => {} } = {}) {
   const used = new Set()
 
   function take(offer) {
@@ -64,13 +66,26 @@ export function createNextSender({ cli = resolveOrcaCli(), read = readWorktrees,
 
   return async function next({ offer, index, answers, confirmed = false }) {
     if (used.has(offer)) return false
-    const found = (await offersOf(await settleAgents(await read(cli), readTurnEnded), readQuestion, readSuggestions, readCall, (paneKey) => readPaneScreen(cli, paneKey, terminals, screen))).find((candidate) => candidate.id === offer)
+    const found = (await offersOf(await settleAgents(await read(cli), readTurnEnded), readQuestion, readSuggestions, readCall, (paneKey) => readPaneScreen(cli, paneKey, terminals, screen), readLaunch)).find((candidate) => candidate.id === offer)
     const keys = answers ? answerKeys(found?.questions, answers) : null
     const suggestion = answers ? null : found?.suggestions[index]
     if (!keys && !suggestion) return false
     if (suggestion?.action === 'allow' && found.dangerous && !confirmed) return 'confirm'
     const terminal = (await terminals(cli)).find((candidate) => isPane(candidate, found.paneKey) && candidate.writable)
     if (!terminal) return false
+    if (suggestion?.action === 'restart') {
+      if (used.has(offer)) return false
+      take(offer)
+      try {
+        const result = await restart(found, terminal)
+        if (result !== true) used.delete(offer)
+        if (result === true) log('restarted a claude session under the newest instructions')
+        return result
+      } catch (error) {
+        used.delete(offer)
+        throw error
+      }
+    }
     const onMenu = found.agent === 'codex' ? isCodexPermissionMenu : isPermissionMenu
     if (suggestion?.action && !onMenu(await screen(cli, terminal.handle), found.menuHint)) return false
     // A menu key goes to the menu and leaves a draft alone, so only a typed prompt could join one.

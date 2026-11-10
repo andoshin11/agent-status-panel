@@ -72,7 +72,7 @@ async function pressNext(request, response, next, allowedLogin) {
   }
   try {
     const result = await next(press)
-    if (result === 'typing') return reply(response, 423, { error: 'the input box has a draft' })
+    if (result === 'typing' || result === 'draft') return reply(response, 423, { error: 'the input box has a draft' })
     if (result === 'confirm') return reply(response, 428, { error: 'this command needs confirming' })
     if (result) return reply(response, 204)
     reply(response, 409, { error: 'no longer on offer' })

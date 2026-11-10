@@ -18,6 +18,7 @@ test('reads the settings and fills the defaults', async () => {
   assert.deepEqual(await loadConfig(await write(valid)), {
     ...valid,
     allowedLogin: null,
+    launchHookFile: null,
     apns: null,
     sendText: true,
     staleMinutes: DEFAULT_STALE_MINUTES,
@@ -29,6 +30,8 @@ test('reads the settings and fills the defaults', async () => {
 
 test('reads who may press the buttons, and refuses anything but a name', async () => {
   assert.equal((await loadConfig(await write({ ...valid, allowedLogin: 'me@example.com' }))).allowedLogin, 'me@example.com')
+  assert.equal((await loadConfig(await write({ ...valid, launchHookFile: '/m/src/launch-hook.mjs' }))).launchHookFile, '/m/src/launch-hook.mjs')
+  await assert.rejects(loadConfig(await write({ ...valid, launchHookFile: 'src/launch-hook.mjs' })), /launchHookFile/)
   for (const allowedLogin of ['', 1, true]) {
     await assert.rejects(loadConfig(await write({ ...valid, allowedLogin })), /allowedLogin/)
   }
