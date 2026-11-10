@@ -79,15 +79,24 @@ export function buildEnded(id) {
   return { v: SCHEMA_VERSION, id, state: 'ended' }
 }
 
-/** Asks the phone to notify that an agent needs the user. Only a state and a directory name. */
-export function buildAttention({ path, reason }, { sendText = true } = {}) {
+/**
+ * Asks the phone to notify that an agent needs the user. Only a state, a directory name and the id
+ * of what it offers to choose from: the iPhone reads the choices themselves from the Mac mini.
+ */
+export function buildAttention({ path, reason, offer }, { sendText = true } = {}) {
   return {
     v: SCHEMA_VERSION,
     id: `attention-${sessionKey(path)}`,
     state: 'attention',
     reason,
-    workspace: sendText ? shorten(basename(path)) : ''
+    workspace: sendText ? shorten(basename(path)) : '',
+    ...(offer ? { offer } : {})
   }
+}
+
+/** Asks the iPhone to notify that an agent finished and proposes what to do next. */
+export function buildProposal({ path, offer }, { sendText = true } = {}) {
+  return { v: SCHEMA_VERSION, id: `proposal-${sessionKey(path)}`, state: 'proposal', offer, workspace: sendText ? shorten(basename(path)) : '' }
 }
 
 /** What decides whether something changed. */

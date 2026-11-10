@@ -417,6 +417,9 @@ export function offersFrom(worktrees, shown = new Map(), launches = new Map()) {
     if (suggestions.length === 0) continue
     offers.push({
       id: offerId(agent, `${text ?? ''}${launch ? `\n${launch.sessionId}` : ''}`),
+      kind: 'proposal',
+      // When the turn ended, so that a notification is sent only for a proposal that is new.
+      since: agent.stateStartedAt ?? 0,
       path: worktree.path,
       agent: agent.agentType,
       paneKey: agent.paneKey,
