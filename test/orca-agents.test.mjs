@@ -292,16 +292,26 @@ test('isDangerous leaves ordinary commands to one tap', () => {
 test('a tool waiting for permission becomes allow and deny, with what it would do', async () => {
   const [offer] = await offersOf([{ path: '/a', agents: [permissionAgent()] }], async () => null, undefined, async () => bash('touch a'))
   assert.deepEqual(offer.suggestions.map(({ label, action }) => [label, action]), [['許可', 'allow'], ['拒否', 'deny']])
-  assert.equal(offer.question, 'Bash を許可しますか？ touch a')
+  assert.equal(offer.question, '［書き換える］Bash を許可しますか？ touch a')
   assert.equal(offer.dangerous, false)
   assert.equal(offer.menuHint, 'touch a')
   assert.equal(offer.id, offerId(permissionAgent(), 'toolu_b'))
 })
 
+test('a permission card says what kind of call it is and where a shell command runs', async () => {
+  const offer = async (call) => (await offersOf([{ path: '/w/a', agents: [permissionAgent({ toolName: call.name })] }], async () => null, undefined, async () => call))[0]
+  assert.equal((await offer(bash('git status'))).question, '［読むだけ］Bash を許可しますか？ git status')
+  assert.equal((await offer(bash('git push origin main'))).risk, 'outside')
+  assert.equal((await offer(bash('rm -rf x'))).question, '［危険］Bash を許可しますか？ rm -rf x')
+  const elsewhere = await offer({ ...bash('pnpm dev'), cwd: '/w/a/apps/web' })
+  assert.equal(elsewhere.question, '［書き換える］Bash を許可しますか？ pnpm dev\n場所: apps/web')
+  assert.equal(elsewhere.where, 'apps/web')
+})
+
 test('a file tool is described and found on its menu by the file', async () => {
   const call = { toolUseId: 't', name: 'Write', input: { file_path: '/w/memo.txt', content: 'secret' } }
   const [offer] = await offersOf([{ path: '/a', agents: [permissionAgent({ toolName: 'Write' })] }], async () => null, undefined, async () => call)
-  assert.equal(offer.question, 'Write を許可しますか？ /w/memo.txt')
+  assert.equal(offer.question, '［書き換える］Write を許可しますか？ /w/memo.txt')
   assert.equal(offer.menuHint, 'memo.txt')
 })
 
@@ -319,7 +329,7 @@ test('while several calls of one turn wait unwritten, a shell command comes from
   const fromScreen = (agents, shown) => offersOf([{ path: '/a', agents }], async () => null, undefined, async () => null, async () => shown)
   const agent = permissionAgent({ toolName: 'Bash', toolInput: 'touch allowed.txt' })
   const [offer] = await fromScreen([agent], MENU_FOR('touch allowed.txt'))
-  assert.equal(offer.question, 'Bash を許可しますか？ touch allowed.txt')
+  assert.equal(offer.question, '［書き換える］Bash を許可しますか？ touch allowed.txt')
   assert.equal(offer.menuHint, 'touch allowed.txt')
   assert.equal(offer.id, offerId(agent, 'touch allowed.txt'))
   assert.equal((await fromScreen([permissionAgent({ toolName: 'Bash', toolInput: 'rm -rf x' })], MENU_FOR('rm -rf x')))[0].dangerous, true)
@@ -341,7 +351,7 @@ test('a Codex command on its menu becomes allow and stop, with what it would do'
   const [offer] = await codexOffers([codexAgent()], CODEX_COMMAND('touch a'))
   assert.deepEqual(offer.suggestions.map(({ label, action }) => [label, action]), [['許可', 'allow'], ['中止', 'deny']])
   assert.equal(offer.agent, 'codex')
-  assert.equal(offer.question, 'Bash を許可しますか？ touch a')
+  assert.equal(offer.question, '［書き換える］Bash を許可しますか？ touch a')
   assert.equal(offer.menuHint, 'touch a')
   assert.equal(offer.dangerous, false)
 })
@@ -353,7 +363,7 @@ test('a dangerous Codex command asks for a second look', async () => {
 
 test('a Codex edit is described by the file on its menu, even when the path is wrapped', async () => {
   const [offer] = await codexOffers([codexAgent({ toolName: 'apply_patch', toolInput: null })], CODEX_EDIT('/w/some/long', '/path/note.txt'))
-  assert.equal(offer.question, 'ファイルの編集 を許可しますか？ /w/some/long/path/note.txt')
+  assert.equal(offer.question, '［書き換える］ファイルの編集 を許可しますか？ /w/some/long/path/note.txt')
   assert.equal(offer.dangerous, false)
 })
 

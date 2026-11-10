@@ -60,5 +60,7 @@ test('finds the tool call without a result', () => {
 
 test('a call with a result is not pending, as after a denial', () => {
   assert.equal(pendingCall([call('a'), result('a')].join('\n')), null)
+  const inFolder = JSON.stringify({ ...JSON.parse(call('c')), cwd: '/w/a/apps' })
+  assert.equal(pendingCall(inFolder).cwd, '/w/a/apps', 'the folder the shell was in')
   assert.equal(pendingCall(''), null)
 })
