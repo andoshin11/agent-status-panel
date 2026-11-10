@@ -7,6 +7,15 @@ import { buildAttention, buildEnded, buildProgress, buildProposal, fingerprint, 
 // A proposal found later than this after its turn ended is not notified.
 const PROPOSAL_FRESH_MS = 10 * 60_000
 
+function kindsOf(messages) {
+  const counts = new Map()
+  for (const { id, state } of messages) {
+    const kind = state === 'ended' && /^(attention|proposal)-/.test(id) ? `${id.split('-')[0]} ended` : state
+    counts.set(kind, (counts.get(kind) ?? 0) + 1)
+  }
+  return [...counts].map(([kind, count]) => `${count} ${kind}`).join(', ')
+}
+
 function isInside(cwd, path) {
   return cwd === path || (cwd ?? '').startsWith(`${path}/`)
 }
@@ -204,7 +213,8 @@ export function createPublisher({ readSessions, readAttention = async () => [], 
     }
     if (messages.length > 0 && stateFile) await saveState(stateFile, sent)
     if (failure) throw failure
-    if (messages.length > 0) log(`sent ${messages.length} message(s)`)
+    // Which kinds went out, so that a notification can be traced. No ids or text.
+    if (messages.length > 0) log(`sent ${messages.length} message(s): ${kindsOf(messages)}`)
     return messages
   }
 
