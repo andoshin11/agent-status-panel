@@ -6,7 +6,7 @@
 // What a session is told now comes from the plugin's launch hook, read again whenever it changes.
 import { execFile } from 'node:child_process'
 import { open, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { claudePaths, readRunningSessions } from './claude-sessions.mjs'
 import { suggestionFrom, terminalHistoryRoot } from './prompt-suggestions.mjs'
@@ -38,8 +38,15 @@ export function createHookReader(path) {
       if (mtimeMs !== version) {
         // A new URL each time, as an import is cached by its URL.
         const hook = await import(`${pathToFileURL(path).href}?v=${mtimeMs}`)
+        // The grants of "allow the rest of this turn" live next to it, in the same plugin.
+        const grants = await import(`${pathToFileURL(join(dirname(path), 'turn-grant.mjs')).href}?v=${mtimeMs}`).catch(() => null)
         loaded = typeof hook.claudeInstructions === 'function' && typeof hook.withTaskInstructions === 'function'
-          ? { instructions: hook.claudeInstructions(), withTaskInstructions: hook.withTaskInstructions }
+          ? {
+              instructions: hook.claudeInstructions(),
+              signature: typeof hook.launchSignature === 'function' ? hook.launchSignature() : [hook.claudeInstructions()],
+              withTaskInstructions: hook.withTaskInstructions,
+              grants: grants && typeof grants.createGrantAccess === 'function' ? grants : null
+            }
           : null
         version = mtimeMs
       }
@@ -67,23 +74,40 @@ async function readParentArgs(pid) {
 }
 
 /**
- * The one running Claude session in a workspace when it was told something older than the hook
- * says now, or null. @returns { sessionId, pid, args }
+ * The one running Claude session in a workspace with its command line, or null.
+ * @returns { sessionId, pid, args }
  */
-export function createLaunchReader(home, readHook, { readArgsOf = readArgs } = {}) {
+export function createLaunchInfoReader(home, { readArgsOf = readArgs } = {}) {
   const { sessionsRoot } = claudePaths(home)
   // A process keeps its command line, so it is read once.
   const known = new Map()
-  return async function readLaunch(path) {
-    const hook = await readHook()
-    if (!hook) return null
+  return async function readLaunchInfo(path) {
     const inside = (await readRunningSessions(sessionsRoot)).filter((entry) => entry.cwd === path || entry.cwd?.startsWith(`${path}/`))
     if (inside.length !== 1) return null
     const [{ sessionId, pid }] = inside
     if (!known.has(pid)) known.set(pid, await readArgsOf(pid))
     const args = known.get(pid)
-    return args && !args.includes(hook.instructions) ? { sessionId, pid, args } : null
+    return args ? { sessionId, pid, args } : null
   }
+}
+
+/**
+ * The one running Claude session in a workspace when it was started without what the hook gives a
+ * session now, or null. @returns { sessionId, pid, args }
+ */
+export function createLaunchReader(home, readHook, { readArgsOf = readArgs, readLaunchInfo = createLaunchInfoReader(home, { readArgsOf }) } = {}) {
+  return async function readLaunch(path) {
+    const hook = await readHook()
+    if (!hook) return null
+    const info = await readLaunchInfo(path)
+    const signature = hook.signature ?? [hook.instructions]
+    return info && !signature.every((part) => info.args.includes(part)) ? info : null
+  }
+}
+
+/** Whether a session was started with the plugin's hook for "allow the rest of this turn". */
+export function hasGrantHook(args) {
+  return typeof args === 'string' && args.includes('permission-hook.mjs')
 }
 
 /**

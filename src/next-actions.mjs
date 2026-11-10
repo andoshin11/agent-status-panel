@@ -44,8 +44,9 @@ async function sendKeys(cli, handle, keys) {
  *   input box would be sent along with it, 'confirm' to allow a dangerous command unconfirmed, or
  *   'draft' when a restart would lose what is typed in Claude Code's input box. It throws when sending fails.
  * @param restart  starts a Claude session again, see restart.mjs
+ * @param grantRest  allows the rest of the turn of a Claude session id, through the Milestone plugin
  */
-export function createNextSender({ cli = resolveOrcaCli(), read = readWorktrees, readQuestion = async () => null, readSuggestions, readCall, readTurnEnded = async () => null, readLaunch, restart = async () => false, terminals = listTerminals, send = sendPrompt, pressKeys = sendKeys, stash = stashDraft, screen = readScreen, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), onSent = () => {}, log = () => {} } = {}) {
+export function createNextSender({ cli = resolveOrcaCli(), read = readWorktrees, readQuestion = async () => null, readSuggestions, readCall, readTurnEnded = async () => null, readLaunch, readGrants, restart = async () => false, grantRest = async () => { throw new Error('cannot allow the rest of a turn') }, terminals = listTerminals, send = sendPrompt, pressKeys = sendKeys, stash = stashDraft, screen = readScreen, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), onSent = () => {}, log = () => {} } = {}) {
   const used = new Set()
 
   function take(offer) {
@@ -66,7 +67,7 @@ export function createNextSender({ cli = resolveOrcaCli(), read = readWorktrees,
 
   return async function next({ offer, index, answers, confirmed = false }) {
     if (used.has(offer)) return false
-    const found = (await offersOf(await settleAgents(await read(cli), readTurnEnded), readQuestion, readSuggestions, readCall, (paneKey) => readPaneScreen(cli, paneKey, terminals, screen), readLaunch)).find((candidate) => candidate.id === offer)
+    const found = (await offersOf(await settleAgents(await read(cli), readTurnEnded), readQuestion, readSuggestions, readCall, (paneKey) => readPaneScreen(cli, paneKey, terminals, screen), readLaunch, readGrants)).find((candidate) => candidate.id === offer)
     const keys = answers ? answerKeys(found?.questions, answers) : null
     const suggestion = answers ? null : found?.suggestions[index]
     if (!keys && !suggestion) return false
@@ -95,7 +96,11 @@ export function createNextSender({ cli = resolveOrcaCli(), read = readWorktrees,
     take(offer)
     try {
       if (keys) await answerForm(terminal.handle, keys)
-      else if (suggestion.action) await pressKeys(cli, terminal.handle, suggestion.action === 'allow' ? ALLOW_ONCE_KEY : ESCAPE_KEY)
+      else if (suggestion.action === 'allow-rest') {
+        // The grant first: the next call asks the hook as soon as this one is allowed.
+        await grantRest(found.sessionId)
+        await pressKeys(cli, terminal.handle, ALLOW_ONCE_KEY)
+      } else if (suggestion.action) await pressKeys(cli, terminal.handle, suggestion.action === 'allow' ? ALLOW_ONCE_KEY : ESCAPE_KEY)
       else if (suggestion.keys) await pressKeys(cli, terminal.handle, suggestion.keys)
       else {
         if (found.agent === 'claude') await stash(cli, terminal.handle)
