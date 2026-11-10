@@ -1,7 +1,9 @@
 // Sends an action an agent proposed, or the answer to its question, when the user presses a button.
 // The phone says only which button: what to send comes from what the agent wrote, read again now,
 // so a phone cannot send anything else and a button from an earlier turn does nothing.
-import { answerKeys, isCodexPermissionMenu, isPane, listTerminals, offersOf, readPaneScreen, readScreen, readWorktrees, resolveOrcaCli, runOrca } from './orca-agents.mjs'
+import { answerKeys, isCodexPermissionMenu, isPane, isPermissionMenu, listTerminals, offersOf, readPaneScreen, readScreen, readWorktrees, resolveOrcaCli, runOrca } from './orca-agents.mjs'
+
+export { isPermissionMenu }
 
 const USED_MAX = 256
 const SUBMIT_WAIT_SECONDS = '8'
@@ -16,9 +18,6 @@ const REVIEW_WAIT_MS = 800
 const SUBMIT_KEY = '\r'
 const ESCAPE_KEY = '\u001b'
 const ALLOW_ONCE_KEY = '1'
-// The first option differs from nothing else on the menu: the other numbers change with the tool.
-const ALLOW_ONCE_LINE = /^\s*(?:❯\s*)?1\. Yes\s*$/m
-const PERMISSION_FOOTER = 'Esc to cancel'
 // On the review page the menu shows after the last question.
 const REVIEW_PAGE = 'Submit answers'
 
@@ -37,11 +36,6 @@ async function stashDraft(cli, handle) {
 async function sendKeys(cli, handle, keys) {
   const result = await runOrca(cli, ['terminal', 'send', '--terminal', handle, '--text', keys, '--json'])
   if (!result.send?.accepted) throw new Error('the terminal did not accept the key')
-}
-
-/** Keys are pressed only on the menu for this very call, read from the screen just before. */
-export function isPermissionMenu(screen, menuHint) {
-  return ALLOW_ONCE_LINE.test(screen) && screen.includes(PERMISSION_FOOTER) && screen.includes(menuHint)
 }
 
 /**
