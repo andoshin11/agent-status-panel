@@ -1,6 +1,7 @@
 // Asks the Orca CLI what the agents are doing: which need the user, the same states the Milestone
 // panel marks, and which finished with something to propose. `worktree ps` also returns prompts and
-// replies. Of those, only the block an agent wrote for the buttons is kept.
+// replies. Of those, only the block an agent wrote for the buttons and the opening of its reply,
+// which says what the buttons follow from, are kept.
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
@@ -43,6 +44,12 @@ const LINKING_STATES = new Set(['done', 'waiting', 'blocked', 'permission'])
 const NEXT_BLOCK = /```next[ \t]*\r?\n([\s\S]*?)\r?\n?```\s*$/
 const CONTROL = /[\u0000-\u001f\u007f]/
 const SCREEN_LINES = '60'
+const CONTEXT_MAX = 160
+const PROPOSAL_NOTE = '次の作業を選べます（選ばなくても構いません）'
+// Not prose: a heading, a table, a list, a fenced block or a quote says little on its own.
+const NOT_PROSE = /^(#|\||```|>|[-*+] |\d+\. )/
+const MARKDOWN_LINK = /\[([^\]]*)\]\([^)]*\)/g
+const MARKDOWN_EMPHASIS = /\*\*|`/g
 const PERMISSION_STATES = ['waiting', 'permission']
 // Codex's permission menu. Its second option stops asking for good, so only the first is ever pressed.
 const CODEX_ALLOW_ONCE_LINE = /^\s*(?:›\s*)?1\. Yes, proceed \(y\)\s*$/m
@@ -307,6 +314,13 @@ export async function offersOf(worktrees, readQuestion, readSuggestions = async 
   return offers
 }
 
+/** The opening of the reply, then why cards follow it: on their own they do not say. */
+function proposalContext(reply) {
+  const opening = (reply ?? '').replace(NEXT_BLOCK, '').split(/\n\s*\n/).map((part) => part.trim()).find((part) => part && !NOT_PROSE.test(part))
+  const summary = opening ? shorten(opening.replace(MARKDOWN_LINK, '$1').replace(MARKDOWN_EMPHASIS, ''), CONTEXT_MAX) : ''
+  return summary ? `${summary}\n${PROPOSAL_NOTE}` : PROPOSAL_NOTE
+}
+
 /**
  * One entry per workspace whose agent finished and proposed something. A workspace with several
  * main agents has none: the board shows one card for it, so a button could not say which it means.
@@ -322,7 +336,7 @@ export function offersFrom(worktrees, shown = new Map()) {
     const extra = text ? { label: shorten(text, LABEL_MAX), prompt: text, detail: '' } : null
     if (extra && isSuggestion(extra) && !suggestions.some(({ prompt }) => prompt === text)) suggestions.push(extra)
     if (suggestions.length === 0) continue
-    offers.push({ id: offerId(agent, text ?? ''), path: worktree.path, agent: agent.agentType, paneKey: agent.paneKey, suggestions })
+    offers.push({ id: offerId(agent, text ?? ''), path: worktree.path, agent: agent.agentType, paneKey: agent.paneKey, question: proposalContext(agent.lastAssistantMessage), suggestions })
   }
   return offers
 }

@@ -65,8 +65,30 @@ const finished = (extra = {}) => agent('done', { paneKey: 'tab:leaf', hasLivePty
 
 test('offersFrom keeps a workspace with one finished agent that proposed something', () => {
   assert.deepEqual(offersFrom([{ path: '/a', agents: [finished()] }]), [
-    { id: offerId(finished()), path: '/a', agent: 'claude', paneKey: 'tab:leaf', suggestions: [proposal()] }
+    { id: offerId(finished()), path: '/a', agent: 'claude', paneKey: 'tab:leaf', question: `done\n${PROPOSAL_NOTE}`, suggestions: [proposal()] }
   ])
+})
+
+const PROPOSAL_NOTE = '次の作業を選べます（選ばなくても構いません）'
+const blockAfter = (text) => `${text}\n\n\`\`\`next\n${JSON.stringify([proposal()])}\n\`\`\``
+const contextOf = (text) => offersFrom([{ path: '/a', agents: [finished({ lastAssistantMessage: blockAfter(text) })] }])[0].question
+
+test('cards say what they follow from: the opening of the reply, in plain text', () => {
+  assert.equal(contextOf('**PR** [#17](https://example.com/17) を `main` に入れました。\n\n詳しくは後述します。'), `PR #17 を main に入れました。\n${PROPOSAL_NOTE}`)
+})
+
+test('the context skips what is not prose and stays short', () => {
+  assert.equal(contextOf('## 結果\n\n| a | b |\n|---|---|\n\n- 項目\n\n本文です。'), `本文です。\n${PROPOSAL_NOTE}`)
+  assert.equal(contextOf('| a |\n|---|'), PROPOSAL_NOTE)
+  const [summary] = contextOf('あ'.repeat(400)).split('\n')
+  assert.equal([...summary].length, 160)
+  assert.ok(summary.endsWith('…'))
+})
+
+test('a card without a next block still says what it follows from', () => {
+  const plain = finished({ lastAssistantMessage: '終わりました。' })
+  const [offer] = offersFrom([{ path: '/a', agents: [plain] }], new Map([['tab:leaf', 'PR を作ってください']]))
+  assert.equal(offer.question, `終わりました。\n${PROPOSAL_NOTE}`)
 })
 
 test('an offer changes with every turn', () => {
