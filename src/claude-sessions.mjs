@@ -363,7 +363,9 @@ export function turnEnded(text) {
     } catch {
       continue
     }
-    if (entry.type === 'system' && entry.subtype === 'turn_duration') return true
+    // When it ended: Orca keeps the time the agent started working, which does not move while its
+    // shells run, so this tells one turn from the next.
+    if (entry.type === 'system' && entry.subtype === 'turn_duration') return Date.parse(entry.timestamp) || true
     if (entry.type === 'user' || entry.type === 'assistant') return null
   }
   return null

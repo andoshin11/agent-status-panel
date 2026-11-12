@@ -428,6 +428,10 @@ test('a Claude agent Orca calls working but whose turn is over waits, with its p
   assert.equal(settled[1], worktrees[1], 'a turn not known to be over stays as Orca says')
   assert.deepEqual(offersFrom(settled).map((offer) => offer.path), ['/a'])
   assert.equal((await settleAgents(worktrees, async () => { throw new Error('no transcript') }))[0], worktrees[0])
+  const turn = async (at) => offersFrom(await settleAgents([worktrees[0]], async () => at))[0]
+  const first = await turn(1_000)
+  assert.equal(first.since, 1_000, 'a proposal is as new as its turn, not as the shells')
+  assert.notEqual((await turn(2_000)).id, first.id, 'a card pressed in one turn leaves the next one usable')
   const two = [{ path: '/a', agents: [busy, { ...busy, paneKey: 'tab:2' }] }]
   assert.equal((await settleAgents(two, async () => true))[0], two[0], 'two agents cannot be told apart')
   const reader = createAgentReader({ cli: 'orca', read: async () => worktrees, readTurnEnded: async (path) => path === '/a' })

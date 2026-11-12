@@ -95,18 +95,21 @@ function mainAgents(worktree) {
 /**
  * The workspaces with each Claude agent that Orca calls working but whose turn is over marked as
  * done, and `background`: shells it started go on running, and it waits for the user. Its proposals
- * then show as for any agent that finished.
- * @param readTurnEnded  resolves a workspace path to whether its Claude session ended its turn
+ * then show as for any agent that finished. Its `stateStartedAt` becomes the end of the turn: Orca's
+ * stays where the shells began, and the cards of every later turn would get the ids of the first.
+ * @param readTurnEnded  resolves a workspace path to when its Claude session ended its turn (true when
+ *   the time is unknown), or null
  */
 export async function settleAgents(worktrees, readTurnEnded) {
   const settled = []
   for (const worktree of worktrees) {
     const working = mainAgents(worktree).filter((agent) => agent.agentType === 'claude' && agent.state === 'working' && agent.hasLivePty === true)
-    if (worktree.isArchived || working.length !== 1 || !(await readTurnEnded(worktree.path).catch(() => null))) {
+    const ended = worktree.isArchived || working.length !== 1 ? null : await readTurnEnded(worktree.path).catch(() => null)
+    if (!ended) {
       settled.push(worktree)
       continue
     }
-    settled.push({ ...worktree, agents: worktree.agents.map((agent) => (agent === working[0] ? { ...agent, state: 'done', background: true } : agent)) })
+    settled.push({ ...worktree, agents: worktree.agents.map((agent) => (agent === working[0] ? { ...agent, state: 'done', background: true, ...(typeof ended === 'number' ? { stateStartedAt: ended } : {}) } : agent)) })
   }
   return settled
 }
