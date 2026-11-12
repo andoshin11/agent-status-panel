@@ -75,3 +75,8 @@ test('a turn is over once Claude Code wrote its duration, and not after a prompt
   assert.equal(turnEnded([ended, prompt, reply].join('\n')), null)
   assert.equal(turnEnded(reply), null)
 })
+
+test('a turn ends at the time its turn_duration was written', () => {
+  const ended = JSON.stringify({ type: 'system', subtype: 'turn_duration', timestamp: '2026-11-12T06:03:28.391Z' })
+  assert.equal(turnEnded(ended), Date.parse('2026-11-12T06:03:28.391Z'))
+})
