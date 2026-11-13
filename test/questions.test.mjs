@@ -80,3 +80,16 @@ test('a turn ends at the time its turn_duration was written', () => {
   const ended = JSON.stringify({ type: 'system', subtype: 'turn_duration', timestamp: '2026-11-12T06:03:28.391Z' })
   assert.equal(turnEnded(ended), Date.parse('2026-11-12T06:03:28.391Z'))
 })
+
+test('a turn stays over after compacting while idle', () => {
+  const entry = (value) => JSON.stringify(value)
+  const ended = entry({ type: 'system', subtype: 'turn_duration', timestamp: '2026-11-13T06:40:43.000Z' })
+  const compacted = [
+    entry({ type: 'system', subtype: 'compact_boundary' }),
+    entry({ type: 'user', isCompactSummary: true, message: { role: 'user', content: 'This session is being continued...' } }),
+    entry({ type: 'attachment', attachment: { type: 'file' } }),
+    entry({ type: 'system', subtype: 'informational' })
+  ]
+  assert.equal(turnEnded([ended, ...compacted].join('\n')), Date.parse('2026-11-13T06:40:43.000Z'))
+  assert.equal(turnEnded([ended, ...compacted, entry({ type: 'user', message: { role: 'user', content: 'next' } })].join('\n')), null)
+})

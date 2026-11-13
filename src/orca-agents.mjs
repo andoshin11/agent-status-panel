@@ -93,6 +93,15 @@ function mainAgents(worktree) {
 }
 
 /**
+ * When the agent itself finished its turn, as Orca reports it apart from the shells it left running
+ * (`mainAgent`, seen in Orca 1.4.257), or null when Orca does not say.
+ */
+function mainAgentDone(agent) {
+  const main = agent.mainAgent
+  return main?.state === 'done' && Number.isFinite(main.stateStartedAt) ? main.stateStartedAt : null
+}
+
+/**
  * The workspaces with each Claude agent that Orca calls working but whose turn is over marked as
  * done, and `background`: shells it started go on running, and it waits for the user. Its proposals
  * then show as for any agent that finished. Its `stateStartedAt` becomes the end of the turn: Orca's
@@ -104,7 +113,7 @@ export async function settleAgents(worktrees, readTurnEnded) {
   const settled = []
   for (const worktree of worktrees) {
     const working = mainAgents(worktree).filter((agent) => agent.agentType === 'claude' && agent.state === 'working' && agent.hasLivePty === true)
-    const ended = worktree.isArchived || working.length !== 1 ? null : await readTurnEnded(worktree.path).catch(() => null)
+    const ended = worktree.isArchived || working.length !== 1 ? null : (mainAgentDone(working[0]) ?? (await readTurnEnded(worktree.path).catch(() => null)))
     if (!ended) {
       settled.push(worktree)
       continue

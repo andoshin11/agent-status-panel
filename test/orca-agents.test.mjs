@@ -438,3 +438,13 @@ test('a Claude agent Orca calls working but whose turn is over waits, with its p
   await reader.readAttention()
   assert.equal(reader.readOffers().length, 1)
 })
+
+test('Orca saying the agent itself is done settles it without the transcript', async () => {
+  const reply = 'できました\n```next\n[{"label":"A","prompt":"do a"}]\n```'
+  const busy = agent('working', { paneKey: 'tab:leaf', hasLivePty: true, stateStartedAt: 7, lastAssistantMessage: reply, mainAgent: { state: 'done', stateStartedAt: 3_000 } })
+  const settled = await settleAgents([{ path: '/a', agents: [busy] }], async () => { throw new Error('not read') })
+  assert.deepEqual(settled[0].agents[0], { ...busy, state: 'done', background: true, stateStartedAt: 3_000 })
+  assert.equal(offersFrom(settled)[0].since, 3_000)
+  const working = [{ path: '/a', agents: [{ ...busy, mainAgent: { state: 'working', stateStartedAt: 3_000 } }] }]
+  assert.equal((await settleAgents(working, async () => null))[0], working[0], 'the agent itself still working stays working')
+})
