@@ -351,8 +351,9 @@ export function pendingCall(text) {
 
 /**
  * Whether the last turn in a transcript is over: Claude Code writes `turn_duration` when a turn ends,
- * and a prompt or a tool result after it starts another. Orca keeps an agent "working" while shells
- * it started in the background run, even when it waits for the user.
+ * and a prompt or a tool result after it starts another; the summary of a compaction does not. Orca
+ * keeps an agent "working" while shells it started in the background run, even when it waits for
+ * the user.
  */
 export function turnEnded(text) {
   for (const line of text.split('\n').toReversed()) {
@@ -366,6 +367,8 @@ export function turnEnded(text) {
     // When it ended: Orca keeps the time the agent started working, which does not move while its
     // shells run, so this tells one turn from the next.
     if (entry.type === 'system' && entry.subtype === 'turn_duration') return Date.parse(entry.timestamp) || true
+    // Compacting while idle writes the summary as a user entry, which no one typed.
+    if (entry.type === 'user' && entry.isCompactSummary) continue
     if (entry.type === 'user' || entry.type === 'assistant') return null
   }
   return null
