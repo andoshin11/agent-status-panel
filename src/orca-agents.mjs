@@ -93,6 +93,38 @@ function mainAgents(worktree) {
 }
 
 /**
+ * Whether a workspace may hold a Claude agent team: several Claude agents in one tab. The teammates
+ * of Agent Teams run in panes beside their lead, and Orca lists each as an agent of its own.
+ */
+export function mayHoldTeam(worktrees) {
+  return worktrees.some((worktree) => {
+    const tabs = mainAgents(worktree).filter((agent) => agent.agentType === 'claude').map((agent) => agent.paneKey?.split(':')[0])
+    return new Set(tabs).size < tabs.length
+  })
+}
+
+/**
+ * The workspaces with each teammate under its lead, as `parentPaneKey`, so that the lead alone
+ * stands for the team: its cards, its state. Orca marks the terminal of a lead with the agent
+ * identity `claude-agent-teams`; the other Claude agents in its tab are its teammates.
+ * @param terminals the terminals of `orca terminal list`
+ */
+export function joinTeams(worktrees, terminals) {
+  const leads = new Set(
+    (terminals ?? []).filter((terminal) => terminal.agentIdentity === 'claude-agent-teams' && terminal.tabId && terminal.leafId).map((terminal) => `${terminal.tabId}:${terminal.leafId}`)
+  )
+  if (leads.size === 0) return worktrees
+  return worktrees.map((worktree) => {
+    const lead = mainAgents(worktree).find((agent) => leads.has(agent.paneKey))
+    if (!lead) return worktree
+    const tab = lead.paneKey.split(':')[0]
+    const isTeammate = (agent) => agent !== lead && !agent.parentPaneKey && agent.agentType === 'claude' && agent.paneKey?.split(':')[0] === tab
+    if (!worktree.agents.some(isTeammate)) return worktree
+    return { ...worktree, agents: worktree.agents.map((agent) => (isTeammate(agent) ? { ...agent, parentPaneKey: lead.paneKey } : agent)) }
+  })
+}
+
+/**
  * When the agent itself finished its turn, as Orca reports it apart from the shells it left running
  * (`mainAgent`, seen in Orca 1.4.257), or null when Orca does not say.
  */
@@ -516,7 +548,7 @@ export async function readWorktrees(cli) {
  * While Orca cannot answer, the last answer stands: nothing is known to have changed, and clearing
  * it would send a notification again when Orca comes back.
  */
-export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees, readQuestion = async () => null, readSuggestions, readCall, readTurnEnded = async () => null, readLaunch, readGrants, readPane = (paneKey) => readPaneScreen(cli, paneKey), log = () => {} } = {}) {
+export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees, readQuestion = async () => null, readSuggestions, readCall, readTurnEnded = async () => null, readTerminals = () => listTerminals(cli), readLaunch, readGrants, readPane = (paneKey) => readPaneScreen(cli, paneKey), log = () => {} } = {}) {
   let attention = []
   let offers = []
   let links = []
@@ -524,7 +556,9 @@ export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees
   return {
     async readAttention() {
       try {
-        const worktrees = await settleAgents(await read(cli), readTurnEnded)
+        let listed = await read(cli)
+        if (mayHoldTeam(listed)) listed = joinTeams(listed, await readTerminals().catch(() => []))
+        const worktrees = await settleAgents(listed, readTurnEnded)
         attention = attentionFrom(worktrees)
         offers = await offersOf(worktrees, readQuestion, readSuggestions, readCall, readPane, readLaunch, readGrants)
         links = linksFrom(worktrees)
