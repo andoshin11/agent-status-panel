@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { answerKeys, attentionFrom, createAgentReader, isDangerous, linksFrom, offerId, offersFrom, offersOf, parseSuggestions, questionButtons, questionForm, resolveOrcaCli, settleAgents } from '../src/orca-agents.mjs'
+import { answerKeys, attentionFrom, createAgentReader, isDangerous, joinTeams, linksFrom, mayHoldTeam, offerId, offersFrom, offersOf, parseSuggestions, questionButtons, questionForm, resolveOrcaCli, settleAgents } from '../src/orca-agents.mjs'
 
 const agent = (state, extra = {}) => ({ agentType: 'claude', state, prompt: 'secret', ...extra })
 
@@ -447,4 +447,27 @@ test('Orca saying the agent itself is done settles it without the transcript', a
   assert.equal(offersFrom(settled)[0].since, 3_000)
   const working = [{ path: '/a', agents: [{ ...busy, mainAgent: { state: 'working', stateStartedAt: 3_000 } }] }]
   assert.equal((await settleAgents(working, async () => null))[0], working[0], 'the agent itself still working stays working')
+})
+
+test('in an agent team, the lead stands for the workspace and its teammates go under it', async () => {
+  const reply = 'できました\n```next\n[{"label":"A","prompt":"do a"}]\n```'
+  const claude = (leaf, extra = {}) => agent('done', { paneKey: `tab:${leaf}`, hasLivePty: true, stateStartedAt: 7, lastAssistantMessage: '届いた通知は新しい依頼ではありません', ...extra })
+  const lead = claude('lead', { lastAssistantMessage: reply })
+  const worktrees = [{ path: '/a', agents: [claude('mate1'), lead, claude('mate2', { state: 'waiting' })] }]
+  const terminals = [
+    { tabId: 'tab', leafId: 'lead', agentIdentity: 'claude-agent-teams' },
+    { tabId: 'tab', leafId: 'mate1', agentIdentity: null },
+    { tabId: 'tab', leafId: 'mate2', agentIdentity: null }
+  ]
+  assert.equal(mayHoldTeam(worktrees), true)
+  assert.equal(mayHoldTeam([{ path: '/b', agents: [claude('x'), { ...claude('y'), paneKey: 'other:y' }] }]), false, 'agents in other tabs are not a team')
+  const joined = joinTeams(worktrees, terminals)
+  assert.deepEqual(joined[0].agents.map((agent) => agent.parentPaneKey ?? null), ['tab:lead', null, 'tab:lead'])
+  assert.deepEqual(offersFrom(joined).map((offer) => [offer.paneKey, offer.suggestions[0].label]), [['tab:lead', 'A']])
+  assert.deepEqual(attentionFrom(joined), [], 'a teammate waiting is the lead\'s business')
+  assert.equal(joinTeams(worktrees, [])[0], worktrees[0], 'without a lead nothing changes')
+
+  const reader = createAgentReader({ cli: 'orca', read: async () => worktrees, readTerminals: async () => terminals })
+  await reader.readAttention()
+  assert.deepEqual(reader.readOffers().map((offer) => offer.paneKey), ['tab:lead'])
 })
