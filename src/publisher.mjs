@@ -2,7 +2,7 @@
 // was sent is saved, so a restart repeats nothing and still ends what went away while it was down.
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { buildAttention, buildEnded, buildProgress, buildProposal, fingerprint, SCHEMA_VERSION } from './payload.mjs'
+import { buildAttention, buildEnded, buildProgress, buildProposal, fingerprint, SCHEMA_VERSION, sessionKey } from './payload.mjs'
 
 // A proposal found later than this after its turn ended is not notified.
 const PROPOSAL_FRESH_MS = 10 * 60_000
@@ -118,14 +118,19 @@ export function createPublisher({ readSessions, readAttention = async () => [], 
   let order = 0
   let board = null
 
-  /** The progress of every session worth showing, before deciding what to send. */
-  function progressOf(sessions) {
+  /**
+   * The progress of every session worth showing, before deciding what to send. For the readers of
+   * `status.json` each session also says where it runs, as a hash of its directory: an Orca on
+   * another Mac that opened that workspace finds its sessions by it, and no path leaves the machine.
+   */
+  function progressOf(sessions, { forReaders = false } = {}) {
     const list = []
     for (const session of [...sessions].sort((a, b) => a.updatedAt - b.updatedAt)) {
       const progress = buildProgress(session, { sendText })
       if (progress.total === '0' && !session.attention && !session.offer && !session.links) continue
+      const place = forReaders && session.cwd ? { place: sessionKey(session.cwd) } : {}
       // A session idle this long is left open, not at work. The widget lists it below the others.
-      list.push({ ...progress, live: now() - session.updatedAt > staleMs ? '0' : '1', ...offerFields(session.offer), ...(session.links ? { links: JSON.stringify(session.links) } : {}) })
+      list.push({ ...progress, ...place, live: now() - session.updatedAt > staleMs ? '0' : '1', ...offerFields(session.offer), ...(session.links ? { links: JSON.stringify(session.links) } : {}) })
     }
     return list
   }
@@ -197,7 +202,7 @@ export function createPublisher({ readSessions, readAttention = async () => [], 
     const progress = progressOf(sessions)
     // Before sending, so that a phone that reads does not wait on one that FCM cannot reach.
     const offers = sendText ? readOffers() : []
-    remember(sendText ? progressOf(withLinks(withOffers(sessions, offers, now()), readLinks(), now())) : progress)
+    remember(progressOf(sendText ? withLinks(withOffers(sessions, offers, now()), readLinks(), now()) : sessions, { forReaders: true }))
     const messages = planFrom(progress, attention, offers)
     let failure = null
     for (const message of messages) {

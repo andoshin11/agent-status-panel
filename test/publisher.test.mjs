@@ -322,6 +322,16 @@ test('links go on the card of their workspace, and never into a push', async () 
   assert.equal(context.delivered[0].links, undefined)
 })
 
+test('status.json says where each session runs as a hash of its directory, and a push never does', async () => {
+  const context = setupLinks([])
+  context.sessions = [session([task(1, 'One', 'in_progress')])]
+  await context.publisher.publish()
+  const [read] = context.publisher.snapshot().sessions
+  assert.equal(read.place, sessionKey(context.sessions[0].cwd))
+  assert.ok(!JSON.stringify(read).includes(context.sessions[0].cwd), 'no path leaves the machine')
+  assert.equal(context.delivered[0].place, undefined)
+})
+
 test('a link from a reply makes a card, and a pull request linked to a quiet workspace does not', async () => {
   const replied = setupLinks([{ path: '/w/app', agent: 'claude', links: [LINK], fromReply: true }])
   await replied.publisher.publish()
