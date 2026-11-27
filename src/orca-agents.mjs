@@ -552,6 +552,7 @@ export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees
   let attention = []
   let offers = []
   let links = []
+  let places = []
   let failing = false
   return {
     async readAttention() {
@@ -562,6 +563,7 @@ export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees
         attention = attentionFrom(worktrees)
         offers = await offersOf(worktrees, readQuestion, readSuggestions, readCall, readPane, readLaunch, readGrants)
         links = linksFrom(worktrees)
+        places = worktrees.map((worktree) => worktree.path).filter((path) => typeof path === 'string' && path.startsWith('/'))
         failing = false
       } catch (error) {
         if (!failing) log(`keeping the last agent states: ${error.message}`)
@@ -571,6 +573,8 @@ export function createAgentReader({ cli = resolveOrcaCli(), read = readWorktrees
     },
     /** What the last `readAttention` found, so that one reading serves both. */
     readOffers: () => offers,
-    readLinks: () => links
+    readLinks: () => links,
+    /** The folders of Orca's workspaces, so that a session started in a subfolder is placed in its workspace. */
+    readPlaces: () => places
   }
 }

@@ -29,11 +29,13 @@ test('the reader keeps the last answer while Orca cannot answer, and logs that o
     if (fail) throw new Error('not running')
     return [{ path: '/a', agents: [agent('waiting')] }]
   }
-  const { readAttention } = createAgentReader({ cli: 'orca', read, log: (message) => logs.push(message) })
+  const { readAttention, readPlaces } = createAgentReader({ cli: 'orca', read, log: (message) => logs.push(message) })
   const first = await readAttention()
   assert.equal(first.length, 1)
+  assert.deepEqual(readPlaces(), ['/a'])
   fail = true
   assert.deepEqual(await readAttention(), first)
+  assert.deepEqual(readPlaces(), ['/a'])
   assert.deepEqual(await readAttention(), first)
   assert.equal(logs.length, 1)
 })

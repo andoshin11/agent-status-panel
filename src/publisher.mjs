@@ -20,6 +20,11 @@ function isInside(cwd, path) {
   return cwd === path || (cwd ?? '').startsWith(`${path}/`)
 }
 
+/** The Orca workspace a directory is in, the innermost when they nest, or the directory itself. */
+export function workspaceOf(cwd, places) {
+  return places.filter((path) => isInside(cwd, path)).reduce((a, b) => (a === null || b.length > a.length ? b : a), null) ?? cwd
+}
+
 /**
  * Marks the newest session of each workspace that needs the user. A workspace with no task list
  * gets a session with no tasks, so the widget can still show it.
@@ -110,25 +115,28 @@ async function saveState(path, sent) {
  * @param readAttention  resolves to the workspaces whose agents need the user
  * @param readOffers  returns what the agents proposed. It reaches the phones that read, never a push.
  * @param readLinks  returns the pull requests of each workspace, also only for the phones that read
+ * @param readPlaces  returns the folders of Orca's workspaces, to say which one each session is in
  * @param send  resolves when delivered. A failure leaves the state alone, so the next run retries.
  * @param stateFile  null keeps nothing on disk, for a dry run
  */
-export function createPublisher({ readSessions, readAttention = async () => [], readOffers = () => [], readLinks = () => [], send, statePath: stateFile, sent, staleMs, sendText, now = Date.now, log = () => {} }) {
+export function createPublisher({ readSessions, readAttention = async () => [], readOffers = () => [], readLinks = () => [], readPlaces = () => [], send, statePath: stateFile, sent, staleMs, sendText, now = Date.now, log = () => {} }) {
   const firstSeen = new Map()
   let order = 0
   let board = null
 
   /**
    * The progress of every session worth showing, before deciding what to send. For the readers of
-   * `status.json` each session also says where it runs, as a hash of its directory: an Orca on
-   * another Mac that opened that workspace finds its sessions by it, and no path leaves the machine.
+   * `status.json` each session also says where it runs, as a hash of the folder of its Orca
+   * workspace (of its own directory outside any): an Orca on another Mac that opened that workspace
+   * finds its sessions by it, also one started in a subfolder, and no path leaves the machine.
    */
   function progressOf(sessions, { forReaders = false } = {}) {
     const list = []
+    const places = forReaders ? readPlaces() : []
     for (const session of [...sessions].sort((a, b) => a.updatedAt - b.updatedAt)) {
       const progress = buildProgress(session, { sendText })
       if (progress.total === '0' && !session.attention && !session.offer && !session.links) continue
-      const place = forReaders && session.cwd ? { place: sessionKey(session.cwd) } : {}
+      const place = forReaders && session.cwd ? { place: sessionKey(workspaceOf(session.cwd, places)) } : {}
       // A session idle this long is left open, not at work. The widget lists it below the others.
       list.push({ ...progress, ...place, live: now() - session.updatedAt > staleMs ? '0' : '1', ...offerFields(session.offer), ...(session.links ? { links: JSON.stringify(session.links) } : {}) })
     }
