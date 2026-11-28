@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { createPublisher, loadState, withAttention } from '../src/publisher.mjs'
+import { createPublisher, loadState, withAttention, workspaceOf } from '../src/publisher.mjs'
 import { sessionKey } from '../src/payload.mjs'
 import { makeHome, task } from './helpers.mjs'
 
@@ -299,11 +299,12 @@ test('a dangerous command is marked on the board, and never in a push', async ()
 
 const LINK = { title: 'PR #1 · app', url: 'https://github.com/o/app/pull/1' }
 
-function setupLinks(entries) {
+function setupLinks(entries, places = []) {
   const context = { sessions: [], delivered: [] }
   context.publisher = createPublisher({
     readSessions: async () => context.sessions,
     readLinks: () => entries,
+    readPlaces: () => places,
     send: async (message) => context.delivered.push(message),
     statePath: null,
     sent: new Map(),
@@ -330,6 +331,16 @@ test('status.json says where each session runs as a hash of its directory, and a
   assert.equal(read.place, sessionKey(context.sessions[0].cwd))
   assert.ok(!JSON.stringify(read).includes(context.sessions[0].cwd), 'no path leaves the machine')
   assert.equal(context.delivered[0].place, undefined)
+})
+
+test('a session started in a subfolder is placed in its Orca workspace, the innermost when they nest', async () => {
+  assert.equal(workspaceOf('/w/app/packages/web', ['/w/app', '/w/app2']), '/w/app')
+  assert.equal(workspaceOf('/w/app/nested/x', ['/w/app', '/w/app/nested']), '/w/app/nested')
+  assert.equal(workspaceOf('/elsewhere', ['/w/app']), '/elsewhere')
+  const context = setupLinks([], ['/w/app'])
+  context.sessions = [session([task(1, 'One', 'in_progress')], { cwd: '/w/app/packages/web' })]
+  await context.publisher.publish()
+  assert.equal(context.publisher.snapshot().sessions[0].place, sessionKey('/w/app'))
 })
 
 test('a link from a reply makes a card, and a pull request linked to a quiet workspace does not', async () => {
